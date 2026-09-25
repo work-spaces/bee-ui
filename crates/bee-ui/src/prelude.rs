@@ -17,9 +17,10 @@ pub use crate::core::{
 pub use crate::demo::show_bootstrap_demo;
 pub use crate::layout::{Breakpoint, Spacing, Span};
 pub use crate::plot::{
-    AxisZoomMode, ChartCard, FollowMode, PlotArea, PlotControlPanel, PlotControlPanelProps,
-    PlotControlPanelResponse, PlotDataSource, PlotPoint, SeriesId, SharedPlotSource,
-    SharedTimeSeriesDataset, TimeSeries, TimeSeriesDataset, TimeSeriesPlot, TimeSeriesPlotProps,
-    TimeSeriesPlotResponse, ViewportState,
+    AxisZoomMode, ChartCard, DEFAULT_DECIMATION_POINTS_PER_PIXEL, FollowMode, GeneratorProfile,
+    MathGenerator, PlotArea, PlotControlPanel, PlotControlPanelProps, PlotControlPanelResponse,
+    PlotDataSource, PlotPoint, SeriesId, SharedPlotSource, SharedTimeSeriesDataset, TimeSeries,
+    TimeSeriesDataset, TimeSeriesPlot, TimeSeriesPlotProps, TimeSeriesPlotResponse, ViewportState,
+    downsample_min_max, prepare_line_points, select_visible_points, viewport_point_budget,
 };
 pub use crate::show_root;

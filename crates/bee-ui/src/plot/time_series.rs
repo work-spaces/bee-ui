@@ -1,6 +1,7 @@
 use super::{
-    AxisZoomMode, FollowMode, PlotArea, PlotControlPanel, PlotControlPanelProps,
-    PlotControlPanelResponse, TimeSeriesDataset, ViewportState, compute_data_bounds,
+    AxisZoomMode, DEFAULT_DECIMATION_POINTS_PER_PIXEL, FollowMode, PlotArea, PlotControlPanel,
+    PlotControlPanelProps, PlotControlPanelResponse, TimeSeriesDataset, ViewportState,
+    compute_data_bounds, prepare_line_points, viewport_point_budget,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -120,8 +121,16 @@ impl TimeSeriesPlot {
             let mut control_panel_props = props.control_panel.clone();
             control_panel_props.has_new_data =
                 control_panel_props.has_new_data || response.has_new_data;
-            control_panel_response =
-                PlotControlPanel::show(ui, viewport, dataset, &control_panel_props);
+
+            control_panel_response = ui
+                .push_id(
+                    ("time_series_control_panel", props.plot.id.as_str()),
+                    |scoped_ui| {
+                        PlotControlPanel::show(scoped_ui, viewport, dataset, &control_panel_props)
+                    },
+                )
+                .inner;
+
             response.control_panel_changed = control_panel_response.changed;
             response.changed |= control_panel_response.changed;
         }
@@ -135,9 +144,13 @@ impl TimeSeriesPlot {
             viewport.y_mode == AxisZoomMode::Manual,
         );
 
+        let available_width = ui.available_width();
+        let plot_width = props.plot.width.unwrap_or(available_width).max(1.0);
+        let point_budget = viewport_point_budget(plot_width, DEFAULT_DECIMATION_POINTS_PER_PIXEL);
+
         let plot_widget = props
             .plot
-            .build_plot(ui.available_width())
+            .build_plot(available_width)
             .allow_zoom(axis_manual)
             .allow_scroll(axis_manual)
             .allow_drag(axis_manual)
@@ -157,17 +170,12 @@ impl TimeSeriesPlot {
                     continue;
                 }
 
-                let points: Vec<[f64; 2]> = series
-                    .points
-                    .iter()
-                    .filter_map(|point| {
-                        if point.x.is_finite() && point.y.is_finite() {
-                            Some([point.x, point.y])
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
+                let points = prepare_line_points(
+                    &series.points,
+                    requested_x_min,
+                    requested_x_max,
+                    point_budget,
+                );
 
                 if points.is_empty() {
                     continue;

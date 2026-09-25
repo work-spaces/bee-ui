@@ -1,8 +1,12 @@
+use std::sync::OnceLock;
+
 use crate::prelude::*;
 
 use super::shared;
 
 const PHASE_TWO_PLOT_VIEWPORT_ID: &str = "runnerd_bs.demo.plots.phase_two.viewport";
+const PHASE_THREE_PLOT_VIEWPORT_ID: &str = "runnerd_bs.demo.plots.phase_three.viewport";
+const PHASE_THREE_POINTS_PER_SERIES: usize = 200_000;
 
 pub(super) fn render_view_plots(ui: &mut UiRoot<'_>) {
     ui.card(Card::new().title("Intro — plot composition").outline(), |ui| {
@@ -138,6 +142,60 @@ pub(super) fn render_view_plots(ui: &mut UiRoot<'_>) {
             });
         },
     );
+
+    ui.card(
+        Card::new()
+            .title("Phase 3 — large synthetic dataset + adaptive downsampling")
+            .outline(),
+        |ui| {
+            let dataset = phase_three_dataset();
+            let total_points: usize = dataset.series.iter().map(|series| series.points.len()).sum();
+
+            ui.text(Text::new(format!(
+                "Synthetic workload with {total_points} points across {} series. The renderer applies viewport-first filtering and adaptive min/max decimation for smooth interaction.",
+                dataset.series.len(),
+            )));
+
+            ui.raw(|egui_ui| {
+                let viewport_id = egui::Id::new(PHASE_THREE_PLOT_VIEWPORT_ID);
+                let mut viewport = egui_ui
+                    .ctx()
+                    .data_mut(|data| data.get_temp::<ViewportState>(viewport_id))
+                    .unwrap_or_else(|| ViewportState {
+                        x_mode: AxisZoomMode::Manual,
+                        y_mode: AxisZoomMode::FitVisible,
+                        follow: FollowMode::Free,
+                        x_window_size: 25.0,
+                        x_min: 0.0,
+                        x_max: 25.0,
+                        ..ViewportState::default()
+                    });
+
+                let point_budget = viewport_point_budget(
+                    egui_ui.available_width(),
+                    DEFAULT_DECIMATION_POINTS_PER_PIXEL,
+                );
+                egui_ui.small(format!(
+                    "Adaptive point budget: ~{point_budget} points/series in-view ({} raw points per series).",
+                    PHASE_THREE_POINTS_PER_SERIES,
+                ));
+
+                let plot = TimeSeriesPlotProps::new("runnerd_bs_demo_phase_three_large_dataset")
+                    .title("Synthetic throughput/latency/noise signals")
+                    .axis_labels("time (s)", "value")
+                    .height(280.0)
+                    .legend(true)
+                    .fill_width(true)
+                    .min_margin_x(1.0);
+
+                TimeSeriesPlot::show(egui_ui, &plot, dataset, &mut viewport);
+
+                egui_ui
+                    .ctx()
+                    .data_mut(|data| data.insert_temp(viewport_id, viewport));
+            });
+        },
+    );
 }
 
 fn line_for_series(series: shared::MetricSeries) -> egui_plot::Line<'static> {
@@ -187,4 +245,38 @@ fn phase_two_dataset() -> TimeSeriesDataset {
         TimeSeries::new("baseline", "Target baseline").with_points(baseline_points),
         hidden_outlier,
     ])
+}
+
+fn phase_three_dataset() -> &'static TimeSeriesDataset {
+    static PHASE_THREE_DATASET: OnceLock<TimeSeriesDataset> = OnceLock::new();
+
+    PHASE_THREE_DATASET.get_or_init(|| {
+        let baseline = MathGenerator::seeded(GeneratorProfile::MultiSine, 0x10)
+            .sample_rate_hz(180.0)
+            .noise_amplitude(0.03)
+            .drift(0.001)
+            .generate_series(
+                "phase_three.baseline",
+                "Baseline multi-sine",
+                PHASE_THREE_POINTS_PER_SERIES,
+            );
+
+        let chirp = MathGenerator::seeded(GeneratorProfile::Chirp, 0x20)
+            .sample_rate_hz(180.0)
+            .noise_amplitude(0.05)
+            .drift(0.0005)
+            .generate_series("phase_three.chirp", "Chirp", PHASE_THREE_POINTS_PER_SERIES);
+
+        let bursty = MathGenerator::seeded(GeneratorProfile::BurstyWithSpikes, 0x30)
+            .sample_rate_hz(180.0)
+            .noise_amplitude(0.07)
+            .drift(0.0)
+            .generate_series(
+                "phase_three.bursty",
+                "Bursty + spikes",
+                PHASE_THREE_POINTS_PER_SERIES,
+            );
+
+        TimeSeriesDataset::new(vec![baseline, chirp, bursty])
+    })
 }

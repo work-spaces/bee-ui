@@ -94,6 +94,31 @@ fn semantic_api_supports_card_plot_wrappers() {
 }
 
 #[test]
+fn semantic_api_supports_phase_three_generator_and_decimation_helpers() {
+    let generator = MathGenerator::seeded(GeneratorProfile::BurstyWithSpikes, 1337)
+        .sample_rate_hz(240.0)
+        .noise_amplitude(0.2)
+        .drift(0.0004);
+
+    let series = generator.generate_series("phase3", "Phase 3", 20_000);
+    assert_eq!(series.points.len(), 20_000);
+
+    let visible = select_visible_points(&series.points, 5.0, 25.0);
+    assert!(!visible.is_empty());
+
+    let decimated = downsample_min_max(&visible, 512);
+    assert!(decimated.len() <= 512);
+
+    let line = prepare_line_points(
+        &series.points,
+        5.0,
+        25.0,
+        viewport_point_budget(640.0, DEFAULT_DECIMATION_POINTS_PER_PIXEL),
+    );
+    assert!(!line.is_empty());
+}
+
+#[test]
 fn semantic_api_supports_mvp_dashboard_composition_smoke() {
     let ctx = egui::Context::default();
 
