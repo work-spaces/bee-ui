@@ -259,9 +259,10 @@ impl SpanTextStyle {
         }
 
         if let Some(font) = &self.font
-            && let Some(family) = font.resolve_family(ctx) {
-                text = text.family(family);
-            }
+            && let Some(family) = font.resolve_family(ctx)
+        {
+            text = text.family(family);
+        }
 
         if self.strong {
             text = text.strong();

@@ -1,3 +1,4 @@
+use bee_ui::plot::{clamp_x_window_to_limits, compute_data_bounds, compute_x_navigation_limits};
 use bee_ui::prelude::*;
 
 #[test]
@@ -314,4 +315,38 @@ fn semantic_api_supports_phase_three_forms_components() {
             ValidationFeedback::invalid("Display name is required").variant(Variant::Danger),
         );
     });
+}
+
+#[test]
+fn semantic_api_supports_phase_one_time_series_foundations() {
+    let mut dataset = TimeSeriesDataset::default();
+
+    let mut latency = TimeSeries::new(SeriesId::new("latency"), "P95 Latency");
+    latency.push_point(PlotPoint::new(0.0, 12.0));
+    latency.push_point(PlotPoint::new(1.0, 18.0));
+    latency.push_point(PlotPoint::new(2.0, 14.0));
+
+    let throughput = TimeSeries::new("throughput", "Throughput")
+        .visible(false)
+        .with_points(vec![PlotPoint::new(0.0, 100.0), PlotPoint::new(2.0, 300.0)]);
+
+    dataset.push_series(latency);
+    dataset.push_series(throughput);
+
+    let source = SharedPlotSource::new(dataset);
+    let snapshot = source.snapshot();
+
+    let bounds = compute_data_bounds(&snapshot).expect("expected data bounds for snapshot");
+    assert_eq!(bounds.x_min, 0.0);
+    assert_eq!(bounds.x_max, 2.0);
+
+    let limits = compute_x_navigation_limits(bounds.x_min, bounds.x_max, 1.0, 0.01)
+        .expect("expected x navigation limits");
+    let (x_min, x_max) = clamp_x_window_to_limits(-100.0, -99.0, limits);
+
+    assert!(x_min >= limits.min_x);
+    assert!(x_max <= limits.max_x);
+
+    let data_source: &dyn PlotDataSource = &source;
+    let _ = data_source.snapshot();
 }

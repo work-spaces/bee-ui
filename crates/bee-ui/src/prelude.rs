@@ -16,5 +16,8 @@ pub use crate::core::{
 };
 pub use crate::demo::show_bootstrap_demo;
 pub use crate::layout::{Breakpoint, Spacing, Span};
-pub use crate::plot::{ChartCard, PlotArea};
+pub use crate::plot::{
+    AxisZoomMode, ChartCard, FollowMode, PlotArea, PlotDataSource, PlotPoint, SeriesId,
+    SharedPlotSource, SharedTimeSeriesDataset, TimeSeries, TimeSeriesDataset, ViewportState,
+};
 pub use crate::show_root;

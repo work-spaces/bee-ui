@@ -1,9 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/bee-api",
     "crates/bee-app",
     "crates/bee-webapp",
-    "crates/bee-ui",
+    "crates/bee-ui", "crates/bee-api",
 ]
 
 [workspace.dependencies]
