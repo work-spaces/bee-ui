@@ -13,7 +13,8 @@ use crate::{
         ComputedCol, ComputedLine, GridColSpec, Span, compute_grid_lines, resolve_active_breakpoint,
     },
     plot::{
-        ChartCard, PlotArea, TimeSeriesDataset, TimeSeriesPlot, TimeSeriesPlotProps, ViewportState,
+        ChartCard, PlotArea, PlotDataSource, TimeSeriesDataset, TimeSeriesPlot,
+        TimeSeriesPlotProps, ViewportState,
     },
     render::{Backend, EguiBackend},
 };
@@ -380,6 +381,21 @@ impl<'a> UiRoot<'a> {
         let props = plot.into();
         self.interop_raw(move |egui_ui| {
             TimeSeriesPlot::show(egui_ui, &props, dataset, viewport);
+        });
+    }
+
+    pub fn time_series_plot_from_source<S>(
+        &mut self,
+        plot: impl Into<TimeSeriesPlotProps>,
+        source: &'a S,
+        viewport: &'a mut ViewportState,
+    ) where
+        S: PlotDataSource + ?Sized + 'a,
+    {
+        let props = plot.into();
+        self.interop_raw(move |egui_ui| {
+            let dataset = source.snapshot();
+            TimeSeriesPlot::show(egui_ui, &props, &dataset, viewport);
         });
     }
 

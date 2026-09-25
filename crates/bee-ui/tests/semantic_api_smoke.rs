@@ -408,3 +408,40 @@ fn semantic_api_supports_phase_two_time_series_control_panel() {
         );
     });
 }
+
+#[test]
+fn semantic_api_supports_phase_four_source_backed_time_series_plot() {
+    let ctx = egui::Context::default();
+
+    let source = SharedPlotSource::new(TimeSeriesDataset::new(vec![
+        TimeSeries::new("live", "Live").with_points(vec![
+            PlotPoint::new(0.0, 1.0),
+            PlotPoint::new(1.0, 1.2),
+            PlotPoint::new(2.0, 0.9),
+        ]),
+    ]));
+
+    {
+        let mut write_guard = source.write();
+        write_guard.series[0].push_point(PlotPoint::new(3.0, 1.4));
+    }
+
+    let mut viewport = ViewportState {
+        x_mode: AxisZoomMode::Manual,
+        y_mode: AxisZoomMode::FitVisible,
+        follow: FollowMode::PinnedToLatest,
+        x_window_size: 2.0,
+        ..ViewportState::default()
+    };
+
+    show_root(&ctx, |ui| {
+        ui.time_series_plot_from_source(
+            TimeSeriesPlotProps::new("phase_four_time_series_plot")
+                .title("Phase 4")
+                .axis_labels("t", "value")
+                .show_control_panel(true),
+            &source,
+            &mut viewport,
+        );
+    });
+}
