@@ -1,0 +1,9 @@
+[package]
+name = "bee-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eframe = "0.33"
+egui_extras = { version = "0.33", features = ["svg"] }
+bee-ui = { path = "../bee-ui" }

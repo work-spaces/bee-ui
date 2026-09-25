@@ -1,0 +1,44 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/bee-app",
+    "crates/bee-webapp",
+    "crates/bee-ui",
+]
+
+[workspace.dependencies]
+anyhow-source-location = "0.2.1"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["use-std"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+state = "0.6"
+petgraph = { version = "0.8", features = ["serde-1"] }
+glob-match = "0.2"
+url = "2"
+toml = "0.9"
+serde_yaml = "0.9"
+strum = { version = "0.26", features = ["derive"] }
+indexmap = { version = "2", features = ["serde"] }
+rayon = "1"
+
+archiver = { path = "crates/spaces-archiver", package = "spaces-archiver"  }
+utils = { path = "crates/spaces-utils", package = "spaces-utils" }
+console = { path = "crates/spaces-console", package = "spaces-console" }
+starstd.path = "crates/starstd"
+
+
+[profile.dev]
+opt-level = 3
+lto = false
+debug = true
+strip = false
+codegen-units = 16
+
+[profile.release]
+opt-level = "z"
+lto = true
+debug = false
+panic = "abort"
+strip = true
+codegen-units = 1
