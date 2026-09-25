@@ -3,6 +3,10 @@ use super::{
     compute_data_bounds, compute_visible_data_bounds, compute_visible_window_bounds,
     compute_x_navigation_limits,
 };
+use crate::{
+    components::FormValidationState,
+    core::{UiTheme, Variant},
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlotControlPanelProps {
@@ -120,25 +124,13 @@ impl PlotControlPanel {
                 }
                 response.changed = true;
             }
-
-            if viewport.follow == FollowMode::Free
-                && props.has_new_data
-                && let Some(bounds) = data_bounds
-                && panel_ui
-                    .button("Go Live")
-                    .on_hover_text("Jump to the newest samples and re-enable follow mode.")
-                    .clicked()
-            {
-                viewport.follow = FollowMode::PinnedToLatest;
-                viewport.x_mode = AxisZoomMode::Manual;
-                viewport.pin_x_to_latest(bounds.x_min, bounds.x_max, props.min_margin_x);
-                response.changed = true;
-                response.go_live_clicked = true;
-            }
         });
 
-        ui.horizontal_wrapped(|panel_ui| {
+        ui.add_space(4.0);
+
+        ui.horizontal(|panel_ui| {
             panel_ui.label("X window");
+            let slider_width = panel_ui.available_width().max(1.0);
 
             if let Some(bounds) = data_bounds {
                 let data_span = (bounds.x_max - bounds.x_min).abs();
@@ -156,36 +148,48 @@ impl PlotControlPanel {
                 let mut next_window = viewport
                     .x_window_size
                     .clamp(min_window, max_window.max(min_window));
-                let slider =
-                    egui::Slider::new(&mut next_window, min_window..=max_window.max(min_window))
-                        .text("range")
-                        .logarithmic(true);
 
-                if panel_ui
-                    .add(slider)
-                    .on_hover_text("Visible X span. Changing this unpins follow mode.")
-                    .changed()
+                if add_bee_form_slider(
+                    panel_ui,
+                    &mut next_window,
+                    min_window..=max_window.max(min_window),
+                    BeeSliderOptions {
+                        logarithmic: true,
+                        enabled: true,
+                        desired_width: Some(slider_width),
+                    },
+                )
+                .on_hover_text("Visible X span. Changing this keeps live pin if currently pinned.")
+                .changed()
                 {
-                    viewport.follow = FollowMode::Free;
                     viewport.x_mode = AxisZoomMode::Manual;
-                    viewport.set_x_window_size_manual(
+                    response.changed |= viewport.set_x_window_size_preserving_pin(
                         next_window,
                         bounds.x_min,
                         bounds.x_max,
                         props.min_margin_x,
                     );
-                    response.changed = true;
                 }
             } else {
                 let mut disabled_window = 0.0;
-                panel_ui.add_enabled(
-                    false,
-                    egui::Slider::new(&mut disabled_window, 0.0..=1.0).text("range"),
+                let _ = add_bee_form_slider(
+                    panel_ui,
+                    &mut disabled_window,
+                    0.0..=1.0,
+                    BeeSliderOptions {
+                        logarithmic: true,
+                        enabled: false,
+                        desired_width: Some(slider_width),
+                    },
                 );
             }
+        });
 
-            panel_ui.separator();
+        ui.add_space(6.0);
+
+        ui.horizontal(|panel_ui| {
             panel_ui.label("X position");
+            let slider_width = panel_ui.available_width().max(1.0);
 
             if let Some(bounds) = data_bounds {
                 if let Some(limits) = compute_x_navigation_limits(
@@ -198,92 +202,146 @@ impl PlotControlPanel {
 
                     if max_start > limits.min_x {
                         let mut next_start = viewport.x_min.clamp(limits.min_x, max_start);
-                        let slider = egui::Slider::new(&mut next_start, limits.min_x..=max_start)
-                            .text("offset");
 
-                        if panel_ui
-                            .add(slider)
-                            .on_hover_text("Pan horizontally within clamped data bounds. Changing this unpins follow mode.")
-                            .changed()
+                        if add_bee_form_slider(
+                            panel_ui,
+                            &mut next_start,
+                            limits.min_x..=max_start,
+                            BeeSliderOptions {
+                                logarithmic: false,
+                                enabled: true,
+                                desired_width: Some(slider_width),
+                            },
+                        )
+                        .on_hover_text("Pan horizontally within clamped data bounds. Changing this unpins follow mode.")
+                        .changed()
                         {
-                            viewport.follow = FollowMode::Free;
                             viewport.x_mode = AxisZoomMode::Manual;
-                            viewport.set_x_start_manual(
+                            response.changed |= viewport.set_x_start_manual(
                                 next_start,
                                 bounds.x_min,
                                 bounds.x_max,
                                 props.min_margin_x,
                             );
-                            response.changed = true;
                         }
                     } else {
-                        panel_ui.add_enabled(
-                            false,
-                            egui::Slider::new(&mut viewport.x_min, limits.min_x..=limits.min_x)
-                                .text("offset"),
+                        let mut disabled_offset = viewport.x_min;
+                        let _ = add_bee_form_slider(
+                            panel_ui,
+                            &mut disabled_offset,
+                            limits.min_x..=limits.min_x,
+                            BeeSliderOptions {
+                                logarithmic: false,
+                                enabled: false,
+                                desired_width: Some(slider_width),
+                            },
                         );
                     }
                 }
             } else {
-                panel_ui.add_enabled(
-                    false,
-                    egui::Slider::new(&mut viewport.x_min, 0.0..=1.0).text("offset"),
+                let mut disabled_offset = viewport.x_min;
+                let _ = add_bee_form_slider(
+                    panel_ui,
+                    &mut disabled_offset,
+                    0.0..=1.0,
+                    BeeSliderOptions {
+                        logarithmic: false,
+                        enabled: false,
+                        desired_width: Some(slider_width),
+                    },
                 );
             }
         });
 
-        ui.horizontal(|panel_ui| {
-            if panel_ui
-                .button("Fit X (X)")
-                .on_hover_text("Fit X to all available data. Keyboard shortcut: `X`.")
-                .clicked()
-                && let Some(bounds) = data_bounds
-            {
-                viewport.follow = FollowMode::Free;
-                viewport.x_mode = AxisZoomMode::FitAll;
-                viewport.fit_x_to_data_bounds(bounds, props.min_margin_x);
-                response.changed = true;
-            }
-
-            if panel_ui
-                .button("Fit Y (Y)")
-                .on_hover_text("Fit Y using the selected Y mode. Keyboard shortcut: `Y`.")
-                .clicked()
-            {
-                if let Some(bounds) =
-                    y_bounds_for_mode(dataset, viewport, viewport.y_mode).or(visible_bounds)
-                {
-                    viewport.fit_y_to_data_bounds(bounds);
-                    if viewport.y_mode == AxisZoomMode::Manual {
-                        viewport.y_mode = AxisZoomMode::FitVisible;
-                    }
-                    response.changed = true;
-                }
-            }
-
-            if panel_ui
-                .button("Fit XY (F)")
-                .on_hover_text("Fit both axes to visible data. Keyboard shortcut: `F`.")
-                .clicked()
-                && let Some(bounds) = data_bounds
-            {
-                viewport.follow = FollowMode::Free;
-                viewport.x_mode = AxisZoomMode::FitAll;
-                viewport.fit_x_to_data_bounds(bounds, props.min_margin_x);
-
-                if let Some(y_bounds) =
-                    compute_visible_window_bounds(dataset, viewport.x_min, viewport.x_max)
-                        .or(visible_bounds)
-                {
-                    viewport.y_mode = AxisZoomMode::FitVisible;
-                    viewport.fit_y_to_data_bounds(y_bounds);
-                }
-
-                response.changed = true;
-            }
-        });
-
         response
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct BeeSliderOptions {
+    logarithmic: bool,
+    enabled: bool,
+    desired_width: Option<f32>,
+}
+
+fn add_bee_form_slider(
+    ui: &mut egui::Ui,
+    value: &mut f64,
+    range: std::ops::RangeInclusive<f64>,
+    options: BeeSliderOptions,
+) -> egui::Response {
+    ui.scope(|scope_ui| {
+        apply_bee_form_range_visuals(scope_ui, !options.enabled);
+
+        let mut slider = egui::Slider::new(value, range).show_value(false);
+        if options.logarithmic {
+            slider = slider.logarithmic(true);
+        }
+
+        let width = options
+            .desired_width
+            .unwrap_or_else(|| scope_ui.available_width().max(1.0))
+            .max(1.0);
+        scope_ui
+            .add_enabled_ui(options.enabled, |enabled_ui| {
+                enabled_ui.add_sized(egui::vec2(width, 0.0), slider)
+            })
+            .inner
+    })
+    .inner
+}
+
+fn apply_bee_form_range_visuals(ui: &mut egui::Ui, disabled: bool) {
+    let mut theme = UiTheme::default();
+    theme.sync_mode_from_dark_mode(matches!(ui.ctx().theme(), egui::Theme::Dark));
+
+    let style =
+        theme.resolve_form_range_style(Variant::Primary, FormValidationState::None, disabled);
+    let tone = theme.resolve_variant(Variant::Primary);
+    let accent = tone.fill;
+
+    {
+        let spacing = ui.spacing_mut();
+        spacing.item_spacing.x = style.label_gap;
+        spacing.interact_size.y = (spacing.interact_size.y * 0.6).max(8.0);
+    }
+
+    {
+        let visuals = ui.visuals_mut();
+        let rounded = egui::CornerRadius::same(theme.radius.pill);
+        let border = egui::Stroke::new(1.0_f32, tone.border);
+
+        visuals.handle_shape = egui::style::HandleShape::Circle;
+
+        visuals.widgets.inactive.bg_fill = tone.bg_subtle;
+        visuals.widgets.inactive.weak_bg_fill = tone.bg_subtle;
+        visuals.widgets.inactive.bg_stroke = border;
+        visuals.widgets.inactive.fg_stroke.color = style.text;
+        visuals.widgets.inactive.corner_radius = rounded;
+
+        visuals.widgets.hovered.bg_fill = accent;
+        visuals.widgets.hovered.weak_bg_fill = tone.bg_subtle;
+        visuals.widgets.hovered.bg_stroke = border;
+        visuals.widgets.hovered.fg_stroke.color = style.text;
+        visuals.widgets.hovered.corner_radius = rounded;
+
+        visuals.widgets.active.bg_fill = accent;
+        visuals.widgets.active.weak_bg_fill = tone.bg_subtle;
+        visuals.widgets.active.bg_stroke = border;
+        visuals.widgets.active.fg_stroke.color = style.text;
+        visuals.widgets.active.corner_radius = rounded;
+
+        visuals.widgets.open.bg_fill = accent;
+        visuals.widgets.open.weak_bg_fill = tone.bg_subtle;
+        visuals.widgets.open.bg_stroke = border;
+        visuals.widgets.open.fg_stroke.color = style.text;
+        visuals.widgets.open.corner_radius = rounded;
+
+        visuals.widgets.noninteractive.bg_fill = tone.bg_subtle;
+        visuals.widgets.noninteractive.weak_bg_fill = tone.bg_subtle;
+        visuals.widgets.noninteractive.bg_stroke = border;
+        visuals.widgets.noninteractive.fg_stroke.color = style.disabled_text;
+        visuals.widgets.noninteractive.corner_radius = rounded;
     }
 }
 

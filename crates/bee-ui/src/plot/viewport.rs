@@ -197,6 +197,27 @@ impl ViewportState {
         false
     }
 
+    pub fn set_x_window_size_preserving_pin(
+        &mut self,
+        window_size: f64,
+        data_x_min: f64,
+        data_x_max: f64,
+        min_margin_x: f64,
+    ) -> bool {
+        let keep_pinned = self.follow == FollowMode::PinnedToLatest;
+
+        let mut changed =
+            self.set_x_window_size_manual(window_size, data_x_min, data_x_max, min_margin_x);
+
+        if keep_pinned {
+            self.x_mode = AxisZoomMode::Manual;
+            changed |= self.pin_x_to_latest(data_x_min, data_x_max, min_margin_x);
+            self.follow = FollowMode::PinnedToLatest;
+        }
+
+        changed
+    }
+
     pub fn set_x_start_manual(
         &mut self,
         x_start: f64,
@@ -214,6 +235,8 @@ impl ViewportState {
             self.x_min = x_min;
             self.x_max = x_max;
             self.x_window_size = x_max - x_min;
+            self.x_mode = AxisZoomMode::Manual;
+            self.follow = FollowMode::Free;
             return changed;
         }
 
@@ -554,6 +577,46 @@ mod tests {
         assert!((viewport.x_max - 20.0).abs() <= 1e-9);
         assert!((viewport.x_window_size - 4.0).abs() <= 1e-9);
         assert!((viewport.x_min - 16.0).abs() <= 1e-9);
+    }
+
+    #[test]
+    fn resizing_window_preserves_pinned_follow_and_latest_anchor() {
+        let mut viewport = ViewportState {
+            x_mode: AxisZoomMode::Manual,
+            follow: FollowMode::PinnedToLatest,
+            x_min: 16.0,
+            x_max: 20.0,
+            x_window_size: 4.0,
+            ..ViewportState::default()
+        };
+
+        let changed =
+            viewport.set_x_window_size_preserving_pin(2.0, 0.0, 20.0, DEFAULT_MIN_MARGIN_X);
+
+        assert!(changed);
+        assert_eq!(viewport.follow, FollowMode::PinnedToLatest);
+        assert_eq!(viewport.x_mode, AxisZoomMode::Manual);
+        assert!((viewport.x_max - 20.0).abs() <= 1e-9);
+        assert!((viewport.x_window_size - 2.0).abs() <= 1e-9);
+        assert!((viewport.x_min - 18.0).abs() <= 1e-9);
+    }
+
+    #[test]
+    fn set_x_start_manual_switches_follow_to_free() {
+        let mut viewport = ViewportState {
+            x_mode: AxisZoomMode::Manual,
+            follow: FollowMode::PinnedToLatest,
+            x_min: 16.0,
+            x_max: 20.0,
+            x_window_size: 4.0,
+            ..ViewportState::default()
+        };
+
+        let changed = viewport.set_x_start_manual(12.0, 0.0, 20.0, DEFAULT_MIN_MARGIN_X);
+
+        assert!(changed);
+        assert_eq!(viewport.follow, FollowMode::Free);
+        assert_eq!(viewport.x_mode, AxisZoomMode::Manual);
     }
 
     #[test]

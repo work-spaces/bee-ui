@@ -1,8 +1,8 @@
 use super::{
     AxisZoomMode, DEFAULT_DECIMATION_POINTS_PER_PIXEL, FollowMode, PlotArea, PlotControlPanel,
-    PlotControlPanelProps, PlotControlPanelResponse, TimeSeriesDataset, ViewportState,
-    compute_data_bounds, compute_visible_data_bounds, compute_visible_window_bounds,
-    prepare_line_points, viewport_point_budget,
+    PlotControlPanelProps, TimeSeriesDataset, ViewportState, compute_data_bounds,
+    compute_visible_data_bounds, compute_visible_window_bounds, prepare_line_points,
+    viewport_point_budget,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -118,26 +118,6 @@ impl TimeSeriesPlot {
             ui.add_space(4.0);
         }
 
-        let mut control_panel_response = PlotControlPanelResponse::default();
-        if props.show_control_panel {
-            let mut control_panel_props = props.control_panel.clone();
-            control_panel_props.has_new_data =
-                control_panel_props.has_new_data || response.has_new_data;
-
-            control_panel_response = ui
-                .push_id(
-                    ("time_series_control_panel", props.plot.id.as_str()),
-                    |scoped_ui| {
-                        PlotControlPanel::show(scoped_ui, viewport, dataset, &control_panel_props)
-                    },
-                )
-                .inner;
-
-            response.control_panel_changed = control_panel_response.changed;
-            response.changed |= control_panel_response.changed;
-        }
-
-        viewport.apply_modes_for_dataset(dataset, props.control_panel.min_margin_x);
         let (requested_x_min, requested_x_max, requested_y_min, requested_y_max) =
             viewport.normalized_bounds();
 
@@ -283,7 +263,59 @@ impl TimeSeriesPlot {
             response.changed = true;
         }
 
-        response.changed |= control_panel_response.go_live_clicked;
+        if props.show_control_panel {
+            ui.add_space(6.0);
+
+            let control_panel_open_id = ui
+                .id()
+                .with(("time_series_control_panel_open", props.plot.id.as_str()));
+
+            let mut control_panel_open = ui
+                .ctx()
+                .data_mut(|data| data.get_persisted::<bool>(control_panel_open_id))
+                .unwrap_or(true);
+
+            let toggle_label = if control_panel_open {
+                "Hide controls"
+            } else {
+                "Show controls"
+            };
+
+            if ui.small_button(toggle_label).clicked() {
+                control_panel_open = !control_panel_open;
+                response.changed = true;
+            }
+
+            ui.ctx()
+                .data_mut(|data| data.insert_persisted(control_panel_open_id, control_panel_open));
+
+            if control_panel_open {
+                ui.add_space(4.0);
+
+                let mut control_panel_props = props.control_panel.clone();
+                control_panel_props.has_new_data =
+                    control_panel_props.has_new_data || response.has_new_data;
+
+                let control_panel_response = ui
+                    .push_id(
+                        ("time_series_control_panel", props.plot.id.as_str()),
+                        |scoped_ui| {
+                            PlotControlPanel::show(
+                                scoped_ui,
+                                viewport,
+                                dataset,
+                                &control_panel_props,
+                            )
+                        },
+                    )
+                    .inner;
+
+                response.control_panel_changed = control_panel_response.changed;
+                response.changed |= control_panel_response.changed;
+                response.changed |= control_panel_response.go_live_clicked;
+            }
+        }
+
         response
     }
 }
