@@ -12,7 +12,9 @@ use crate::{
     layout::{
         ComputedCol, ComputedLine, GridColSpec, Span, compute_grid_lines, resolve_active_breakpoint,
     },
-    plot::{ChartCard, PlotArea},
+    plot::{
+        ChartCard, PlotArea, TimeSeriesDataset, TimeSeriesPlot, TimeSeriesPlotProps, ViewportState,
+    },
     render::{Backend, EguiBackend},
 };
 
@@ -367,6 +369,18 @@ impl<'a> UiRoot<'a> {
             props,
             body: Some(Box::new(f)),
         }));
+    }
+
+    pub fn time_series_plot(
+        &mut self,
+        plot: impl Into<TimeSeriesPlotProps>,
+        dataset: &'a TimeSeriesDataset,
+        viewport: &'a mut ViewportState,
+    ) {
+        let props = plot.into();
+        self.interop_raw(move |egui_ui| {
+            TimeSeriesPlot::show(egui_ui, &props, dataset, viewport);
+        });
     }
 
     pub fn badge(&mut self, badge: impl Into<BadgeProps>) {

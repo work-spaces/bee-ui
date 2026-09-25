@@ -350,3 +350,36 @@ fn semantic_api_supports_phase_one_time_series_foundations() {
     let data_source: &dyn PlotDataSource = &source;
     let _ = data_source.snapshot();
 }
+
+#[test]
+fn semantic_api_supports_phase_two_time_series_control_panel() {
+    let ctx = egui::Context::default();
+
+    let dataset = TimeSeriesDataset::new(vec![TimeSeries::new("latency", "Latency").with_points(
+        vec![
+            PlotPoint::new(0.0, 100.0),
+            PlotPoint::new(1.0, 102.0),
+            PlotPoint::new(2.0, 98.0),
+            PlotPoint::new(3.0, 105.0),
+        ],
+    )]);
+
+    let mut viewport = ViewportState {
+        x_mode: AxisZoomMode::Manual,
+        y_mode: AxisZoomMode::FitVisible,
+        follow: FollowMode::Free,
+        x_window_size: 2.0,
+        ..ViewportState::default()
+    };
+
+    show_root(&ctx, |ui| {
+        ui.time_series_plot(
+            TimeSeriesPlotProps::new("phase_two_time_series_plot")
+                .title("Phase 2")
+                .axis_labels("t", "v")
+                .show_control_panel(true),
+            &dataset,
+            &mut viewport,
+        );
+    });
+}

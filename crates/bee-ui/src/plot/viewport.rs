@@ -1,6 +1,8 @@
 use super::data::TimeSeriesDataset;
 
 pub const DEFAULT_MIN_MARGIN_X: f64 = 0.001;
+const DEFAULT_DEGENERATE_SPAN: f64 = 1.0;
+const EPSILON: f64 = 1e-9;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AxisZoomMode {
@@ -70,6 +72,36 @@ pub struct XNavigationLimits {
 }
 
 impl ViewportState {
+    pub fn x_span(&self) -> f64 {
+        (self.x_max - self.x_min).abs()
+    }
+
+    pub fn y_span(&self) -> f64 {
+        (self.y_max - self.y_min).abs()
+    }
+
+    pub fn normalized_bounds(&self) -> (f64, f64, f64, f64) {
+        let x_fallback = sanitize_window_size(self.x_window_size, self.x_span());
+        let y_fallback = sanitize_window_size(self.y_span(), DEFAULT_DEGENERATE_SPAN);
+
+        let (x_min, x_max) = sanitize_range(self.x_min, self.x_max, x_fallback);
+        let (y_min, y_max) = sanitize_range(self.y_min, self.y_max, y_fallback);
+
+        (x_min, x_max, y_min, y_max)
+    }
+
+    pub fn set_x_mode(&mut self, mode: AxisZoomMode) {
+        self.x_mode = mode;
+    }
+
+    pub fn set_y_mode(&mut self, mode: AxisZoomMode) {
+        self.y_mode = mode;
+    }
+
+    pub fn set_follow_mode(&mut self, mode: FollowMode) {
+        self.follow = mode;
+    }
+
     pub fn normalize_x_window_size(&mut self) {
         self.x_window_size = sanitize_window_size(self.x_window_size, self.x_max - self.x_min);
     }
@@ -86,6 +118,184 @@ impl ViewportState {
             self.x_max = x_max;
             self.x_window_size = x_max - x_min;
         }
+    }
+
+    pub fn fit_x_to_data_bounds(&mut self, bounds: DataBounds, min_margin_x: f64) {
+        let x_fallback = sanitize_window_size(self.x_window_size, bounds.x_span().abs());
+        let (x_min, x_max) = sanitize_range(bounds.x_min, bounds.x_max, x_fallback);
+
+        self.x_min = x_min;
+        self.x_max = x_max;
+        self.x_window_size = x_max - x_min;
+        self.clamp_x_to_data_bounds(bounds, min_margin_x);
+    }
+
+    pub fn fit_y_to_data_bounds(&mut self, bounds: DataBounds) {
+        self.fit_y_to_range(bounds.y_min, bounds.y_max);
+    }
+
+    pub fn fit_y_to_range(&mut self, y_min: f64, y_max: f64) {
+        let fallback = sanitize_window_size(self.y_span(), DEFAULT_DEGENERATE_SPAN);
+        let (y_min, y_max) = sanitize_range(y_min, y_max, fallback);
+        self.y_min = y_min;
+        self.y_max = y_max;
+    }
+
+    pub fn fit_xy_to_data_bounds(&mut self, bounds: DataBounds, min_margin_x: f64) {
+        self.fit_x_to_data_bounds(bounds, min_margin_x);
+        self.fit_y_to_data_bounds(bounds);
+    }
+
+    pub fn pin_x_to_latest(&mut self, data_x_min: f64, data_x_max: f64, min_margin_x: f64) -> bool {
+        let Some((data_x_min, data_x_max)) = ordered_pair(data_x_min, data_x_max) else {
+            return false;
+        };
+
+        let window_size = sanitize_window_size(self.x_window_size, data_x_max - data_x_min);
+        let next_min = data_x_max - window_size;
+        let next_max = data_x_max;
+
+        if let Some((x_min, x_max)) =
+            clamp_x_window_to_data(next_min, next_max, data_x_min, data_x_max, min_margin_x)
+        {
+            let changed = !approx_eq(self.x_min, x_min) || !approx_eq(self.x_max, x_max);
+            self.x_min = x_min;
+            self.x_max = x_max;
+            self.x_window_size = x_max - x_min;
+            return changed;
+        }
+
+        false
+    }
+
+    pub fn set_x_window_size_manual(
+        &mut self,
+        window_size: f64,
+        data_x_min: f64,
+        data_x_max: f64,
+        min_margin_x: f64,
+    ) -> bool {
+        let Some((data_x_min, data_x_max)) = ordered_pair(data_x_min, data_x_max) else {
+            return false;
+        };
+
+        let next_window_size = sanitize_window_size(window_size, self.x_window_size);
+        let center = finite_midpoint(self.x_min, self.x_max).unwrap_or(data_x_max);
+        let next_min = center - next_window_size * 0.5;
+        let next_max = center + next_window_size * 0.5;
+
+        if let Some((x_min, x_max)) =
+            clamp_x_window_to_data(next_min, next_max, data_x_min, data_x_max, min_margin_x)
+        {
+            let changed = !approx_eq(self.x_min, x_min) || !approx_eq(self.x_max, x_max);
+            self.x_min = x_min;
+            self.x_max = x_max;
+            self.x_window_size = x_max - x_min;
+            return changed;
+        }
+
+        false
+    }
+
+    pub fn set_x_start_manual(
+        &mut self,
+        x_start: f64,
+        data_x_min: f64,
+        data_x_max: f64,
+        min_margin_x: f64,
+    ) -> bool {
+        let window_size = sanitize_window_size(self.x_window_size, self.x_span());
+        let requested_end = x_start + window_size;
+
+        if let Some((x_min, x_max)) =
+            clamp_x_window_to_data(x_start, requested_end, data_x_min, data_x_max, min_margin_x)
+        {
+            let changed = !approx_eq(self.x_min, x_min) || !approx_eq(self.x_max, x_max);
+            self.x_min = x_min;
+            self.x_max = x_max;
+            self.x_window_size = x_max - x_min;
+            return changed;
+        }
+
+        false
+    }
+
+    pub fn set_manual_x_bounds(
+        &mut self,
+        x_min: f64,
+        x_max: f64,
+        data_x_min: f64,
+        data_x_max: f64,
+        min_margin_x: f64,
+    ) -> bool {
+        let requested_width = sanitize_window_size((x_max - x_min).abs(), self.x_window_size);
+        let Some((x_min, x_max)) = clamp_x_window_to_data(
+            x_min,
+            x_min + requested_width,
+            data_x_min,
+            data_x_max,
+            min_margin_x,
+        ) else {
+            return false;
+        };
+
+        let changed = !approx_eq(self.x_min, x_min) || !approx_eq(self.x_max, x_max);
+        self.x_min = x_min;
+        self.x_max = x_max;
+        self.x_window_size = x_max - x_min;
+        self.x_mode = AxisZoomMode::Manual;
+        self.follow = FollowMode::Free;
+        changed
+    }
+
+    pub fn set_manual_y_bounds(&mut self, y_min: f64, y_max: f64) -> bool {
+        let fallback = sanitize_window_size(self.y_span(), DEFAULT_DEGENERATE_SPAN);
+        let (y_min, y_max) = sanitize_range(y_min, y_max, fallback);
+
+        let changed = !approx_eq(self.y_min, y_min) || !approx_eq(self.y_max, y_max);
+        self.y_min = y_min;
+        self.y_max = y_max;
+        self.y_mode = AxisZoomMode::Manual;
+        changed
+    }
+
+    pub fn apply_modes_for_dataset(
+        &mut self,
+        dataset: &TimeSeriesDataset,
+        min_margin_x: f64,
+    ) -> Option<DataBounds> {
+        let data_bounds = compute_data_bounds(dataset)?;
+        let visible_bounds = compute_visible_data_bounds(dataset).unwrap_or(data_bounds);
+
+        match self.x_mode {
+            AxisZoomMode::FitAll | AxisZoomMode::FitVisible => {
+                self.fit_x_to_data_bounds(data_bounds, min_margin_x);
+            }
+            AxisZoomMode::Manual => {
+                self.normalize_x_window_size();
+                if self.follow == FollowMode::PinnedToLatest {
+                    self.pin_x_to_latest(data_bounds.x_min, data_bounds.x_max, min_margin_x);
+                } else {
+                    self.clamp_x_to_data_bounds(data_bounds, min_margin_x);
+                }
+            }
+        }
+
+        match self.y_mode {
+            AxisZoomMode::FitAll => {
+                self.fit_y_to_data_bounds(visible_bounds);
+            }
+            AxisZoomMode::FitVisible => {
+                if let Some(bounds) = compute_visible_window_bounds(dataset, self.x_min, self.x_max)
+                    .or(Some(visible_bounds))
+                {
+                    self.fit_y_to_data_bounds(bounds);
+                }
+            }
+            AxisZoomMode::Manual => {}
+        }
+
+        Some(data_bounds)
     }
 }
 
@@ -229,8 +439,31 @@ fn sanitize_window_size(window_size: f64, fallback: f64) -> f64 {
     } else if fallback.is_finite() && fallback > 0.0 {
         fallback
     } else {
-        1.0
+        DEFAULT_DEGENERATE_SPAN
     }
+}
+
+fn sanitize_range(min: f64, max: f64, fallback_span: f64) -> (f64, f64) {
+    let (mut min, mut max) = ordered_pair(min, max).unwrap_or((0.0, fallback_span));
+    if approx_eq(min, max) {
+        let span = sanitize_window_size(fallback_span, DEFAULT_DEGENERATE_SPAN);
+        min -= span * 0.5;
+        max += span * 0.5;
+    }
+
+    (min, max)
+}
+
+fn finite_midpoint(a: f64, b: f64) -> Option<f64> {
+    if a.is_finite() && b.is_finite() {
+        Some((a + b) * 0.5)
+    } else {
+        None
+    }
+}
+
+fn approx_eq(a: f64, b: f64) -> bool {
+    (a - b).abs() <= EPSILON
 }
 
 #[cfg(test)]
@@ -285,5 +518,67 @@ mod tests {
         let (x_min, x_max) = clamp_x_window_to_limits(100.0, 104.0, limits);
         assert_eq!(x_max, limits.max_x);
         assert_eq!(x_min, limits.max_x - 4.0);
+    }
+
+    #[test]
+    fn pin_to_latest_preserves_window_size() {
+        let mut viewport = ViewportState {
+            x_min: -4.0,
+            x_max: 0.0,
+            x_window_size: 4.0,
+            x_mode: AxisZoomMode::Manual,
+            follow: FollowMode::PinnedToLatest,
+            ..ViewportState::default()
+        };
+
+        let changed = viewport.pin_x_to_latest(10.0, 20.0, DEFAULT_MIN_MARGIN_X);
+
+        assert!(changed);
+        assert!((viewport.x_max - 20.0).abs() <= 1e-9);
+        assert!((viewport.x_window_size - 4.0).abs() <= 1e-9);
+        assert!((viewport.x_min - 16.0).abs() <= 1e-9);
+    }
+
+    #[test]
+    fn apply_modes_for_dataset_uses_visible_y_bounds_when_requested() {
+        let dataset = sample_dataset();
+        let mut viewport = ViewportState {
+            x_mode: AxisZoomMode::Manual,
+            y_mode: AxisZoomMode::FitVisible,
+            x_min: 0.0,
+            x_max: 2.0,
+            x_window_size: 2.0,
+            follow: FollowMode::Free,
+            ..ViewportState::default()
+        };
+
+        let data_bounds = viewport
+            .apply_modes_for_dataset(&dataset, DEFAULT_MIN_MARGIN_X)
+            .expect("expected bounds");
+
+        assert_eq!(data_bounds.x_min, 0.0);
+        assert_eq!(data_bounds.x_max, 2.0);
+        assert_eq!(viewport.y_min, 1.0);
+        assert_eq!(viewport.y_max, 3.0);
+    }
+
+    #[test]
+    fn set_x_start_manual_clamps_to_limits() {
+        let mut viewport = ViewportState {
+            x_min: 0.0,
+            x_max: 2.0,
+            x_window_size: 2.0,
+            ..ViewportState::default()
+        };
+
+        let changed = viewport.set_x_start_manual(-100.0, 10.0, 20.0, DEFAULT_MIN_MARGIN_X);
+        assert!(changed);
+
+        let limits =
+            compute_x_navigation_limits(10.0, 20.0, viewport.x_window_size, DEFAULT_MIN_MARGIN_X)
+                .expect("limits");
+
+        assert!(viewport.x_min >= limits.min_x - 1e-9);
+        assert!(viewport.x_max <= limits.max_x + 1e-9);
     }
 }

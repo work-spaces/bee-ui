@@ -2,6 +2,8 @@ use crate::prelude::*;
 
 use super::shared;
 
+const PHASE_TWO_PLOT_VIEWPORT_ID: &str = "runnerd_bs.demo.plots.phase_two.viewport";
+
 pub(super) fn render_view_plots(ui: &mut UiRoot<'_>) {
     ui.card(Card::new().title("Intro — plot composition").outline(), |ui| {
         ui.text(Text::new(
@@ -96,6 +98,46 @@ pub(super) fn render_view_plots(ui: &mut UiRoot<'_>) {
             });
         },
     );
+
+    ui.card(
+        Card::new()
+            .title("Phase 2 — control panel + bounded scrolling")
+            .outline(),
+        |ui| {
+            ui.text(Text::new(
+                "Use manual X/Y modes to pan/zoom. X panning is clamped to data extent with a small overscroll margin.",
+            ));
+
+            ui.raw(|egui_ui| {
+                let viewport_id = egui::Id::new(PHASE_TWO_PLOT_VIEWPORT_ID);
+                let mut viewport = egui_ui
+                    .ctx()
+                    .data_mut(|data| data.get_temp::<ViewportState>(viewport_id))
+                    .unwrap_or_else(|| ViewportState {
+                        x_mode: AxisZoomMode::Manual,
+                        y_mode: AxisZoomMode::FitVisible,
+                        follow: FollowMode::Free,
+                        x_window_size: 10.0,
+                        ..ViewportState::default()
+                    });
+
+                let dataset = phase_two_dataset();
+                let plot = TimeSeriesPlotProps::new("runnerd_bs_demo_phase_two_controlled_plot")
+                    .title("Latency trend (manual viewport controls)")
+                    .axis_labels("minute", "latency ms")
+                    .height(240.0)
+                    .legend(true)
+                    .fill_width(true)
+                    .min_margin_x(0.5);
+
+                TimeSeriesPlot::show(egui_ui, &plot, &dataset, &mut viewport);
+
+                egui_ui
+                    .ctx()
+                    .data_mut(|data| data.insert_temp(viewport_id, viewport));
+            });
+        },
+    );
 }
 
 fn line_for_series(series: shared::MetricSeries) -> egui_plot::Line<'static> {
@@ -117,4 +159,32 @@ fn line_for_series(series: shared::MetricSeries) -> egui_plot::Line<'static> {
     };
 
     egui_plot::Line::new(series.label, points).color(color)
+}
+
+fn phase_two_dataset() -> TimeSeriesDataset {
+    let latency_points: Vec<PlotPoint> = shared::METRIC_SERIES[0]
+        .points
+        .iter()
+        .map(|point| PlotPoint::new(f64::from(point.minute), point.value))
+        .collect();
+
+    let baseline_points: Vec<PlotPoint> = shared::METRIC_SERIES[0]
+        .points
+        .iter()
+        .map(|point| {
+            let x = f64::from(point.minute);
+            let y = 96.0 + (x / 7.0).sin() * 3.0;
+            PlotPoint::new(x, y)
+        })
+        .collect();
+
+    let hidden_outlier = TimeSeries::new("hidden_outlier", "Hidden outlier")
+        .visible(false)
+        .with_points(vec![PlotPoint::new(8.0, 10.0), PlotPoint::new(26.0, 500.0)]);
+
+    TimeSeriesDataset::new(vec![
+        TimeSeries::new("latency", "P95 latency").with_points(latency_points),
+        TimeSeries::new("baseline", "Target baseline").with_points(baseline_points),
+        hidden_outlier,
+    ])
 }
