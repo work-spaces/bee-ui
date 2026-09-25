@@ -10,7 +10,7 @@ fn semantic_api_supports_nested_bootstrap_like_composition() {
             ui.row(Row::new().gutter_x(16.0).gutter_y(12.0), |ui| {
                 ui.col(Col::new().md(8).sm(12), |ui| {
                     ui.card(Card::new().title("System Status"), |ui| {
-                        ui.label(Label::new("Runner").muted(true));
+                        ui.label(Label::new("Runner-").muted(true));
                         ui.badge(Badge::success("Healthy").pill(true));
                         ui.button(Button::new("Restart").variant(Variant::Warning));
                         ui.button(
@@ -439,6 +439,59 @@ fn semantic_api_supports_phase_four_source_backed_time_series_plot() {
             TimeSeriesPlotProps::new("phase_four_time_series_plot")
                 .title("Phase 4")
                 .axis_labels("t", "value")
+                .show_control_panel(true),
+            &source,
+            &mut viewport,
+        );
+    });
+}
+
+#[test]
+fn semantic_api_supports_phase_five_plot_polish_and_shared_aliases() {
+    let ctx = egui::Context::default();
+
+    let source: SharedTimeSeriesDataset =
+        SharedTimeSeriesDataset::new(TimeSeriesDataset::new(vec![
+            TimeSeries::new("live", "Live")
+                .with_points(vec![PlotPoint::new(0.0, 0.2), PlotPoint::new(1.0, 0.6)]),
+            TimeSeries::new("hidden", "Hidden")
+                .visible(false)
+                .with_points(vec![
+                    PlotPoint::new(0.0, -100.0),
+                    PlotPoint::new(1.0, 100.0),
+                ]),
+        ]));
+
+    {
+        let mut write_guard = source.write();
+        write_guard.series[0].push_point(PlotPoint::new(2.0, 0.8));
+    }
+
+    let data_source: &dyn PlotDataSource = &source;
+    let snapshot = data_source.snapshot();
+    assert_eq!(snapshot.series[0].points.len(), 3);
+
+    let mut viewport = ViewportState {
+        x_mode: AxisZoomMode::Manual,
+        y_mode: AxisZoomMode::FitVisible,
+        follow: FollowMode::PinnedToLatest,
+        x_window_size: 1.0,
+        ..ViewportState::default()
+    };
+
+    let _props = PlotControlPanelProps {
+        min_margin_x: 0.25,
+        has_new_data: true,
+    };
+    let _response = PlotControlPanelResponse::default();
+
+    show_root(&ctx, |ui| {
+        ui.time_series_plot_from_source(
+            TimeSeriesPlotProps::new("phase_five_time_series_plot")
+                .title("Phase 5")
+                .axis_labels("t", "value")
+                .min_margin_x(0.25)
+                .include_hidden_series(false)
                 .show_control_panel(true),
             &source,
             &mut viewport,

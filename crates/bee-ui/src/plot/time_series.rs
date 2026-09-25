@@ -1,7 +1,8 @@
 use super::{
     AxisZoomMode, DEFAULT_DECIMATION_POINTS_PER_PIXEL, FollowMode, PlotArea, PlotControlPanel,
     PlotControlPanelProps, PlotControlPanelResponse, TimeSeriesDataset, ViewportState,
-    compute_data_bounds, prepare_line_points, viewport_point_budget,
+    compute_data_bounds, compute_visible_data_bounds, compute_visible_window_bounds,
+    prepare_line_points, viewport_point_budget,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -104,6 +105,7 @@ impl TimeSeriesPlot {
         let previous_x_max = viewport.x_max;
 
         let data_bounds = compute_data_bounds(dataset);
+        let visible_bounds = compute_visible_data_bounds(dataset).or(data_bounds);
         response.has_data = data_bounds.is_some();
         response.has_new_data = data_bounds
             .map(|bounds| bounds.x_max > previous_x_max + 1e-9)
@@ -222,8 +224,106 @@ impl TimeSeriesPlot {
             response.changed = true;
         }
 
+        let shortcuts = collect_plot_shortcuts(
+            ui.ctx(),
+            plot_response.response.hovered() || plot_response.response.has_focus(),
+        );
+
+        if shortcuts.toggle_follow {
+            if viewport.follow == FollowMode::PinnedToLatest {
+                viewport.follow = FollowMode::Free;
+            } else {
+                viewport.follow = FollowMode::PinnedToLatest;
+                viewport.x_mode = AxisZoomMode::Manual;
+                if let Some(bounds) = data_bounds {
+                    viewport.pin_x_to_latest(
+                        bounds.x_min,
+                        bounds.x_max,
+                        props.control_panel.min_margin_x,
+                    );
+                }
+            }
+            response.changed = true;
+        }
+
+        if shortcuts.fit_x
+            && let Some(bounds) = data_bounds
+        {
+            viewport.follow = FollowMode::Free;
+            viewport.x_mode = AxisZoomMode::FitAll;
+            viewport.fit_x_to_data_bounds(bounds, props.control_panel.min_margin_x);
+            response.changed = true;
+        }
+
+        if shortcuts.fit_y
+            && let Some(bounds) =
+                y_bounds_for_mode(dataset, viewport, viewport.y_mode).or(visible_bounds)
+        {
+            viewport.fit_y_to_data_bounds(bounds);
+            if viewport.y_mode == AxisZoomMode::Manual {
+                viewport.y_mode = AxisZoomMode::FitVisible;
+            }
+            response.changed = true;
+        }
+
+        if shortcuts.fit_xy
+            && let Some(bounds) = data_bounds
+        {
+            viewport.follow = FollowMode::Free;
+            viewport.x_mode = AxisZoomMode::FitAll;
+            viewport.fit_x_to_data_bounds(bounds, props.control_panel.min_margin_x);
+
+            if let Some(y_bounds) =
+                compute_visible_window_bounds(dataset, viewport.x_min, viewport.x_max)
+                    .or(visible_bounds)
+            {
+                viewport.y_mode = AxisZoomMode::FitVisible;
+                viewport.fit_y_to_data_bounds(y_bounds);
+            }
+            response.changed = true;
+        }
+
         response.changed |= control_panel_response.go_live_clicked;
         response
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PlotShortcutActions {
+    toggle_follow: bool,
+    fit_x: bool,
+    fit_y: bool,
+    fit_xy: bool,
+}
+
+fn collect_plot_shortcuts(ctx: &egui::Context, enabled: bool) -> PlotShortcutActions {
+    if !enabled {
+        return PlotShortcutActions::default();
+    }
+
+    ctx.input_mut(|input| PlotShortcutActions {
+        toggle_follow: input.consume_key(egui::Modifiers::NONE, egui::Key::L),
+        fit_x: input.consume_key(egui::Modifiers::NONE, egui::Key::X),
+        fit_y: input.consume_key(egui::Modifiers::NONE, egui::Key::Y),
+        fit_xy: input.consume_key(egui::Modifiers::NONE, egui::Key::F),
+    })
+}
+
+fn y_bounds_for_mode(
+    dataset: &TimeSeriesDataset,
+    viewport: &ViewportState,
+    mode: AxisZoomMode,
+) -> Option<super::DataBounds> {
+    match mode {
+        AxisZoomMode::FitVisible => {
+            compute_visible_window_bounds(dataset, viewport.x_min, viewport.x_max)
+                .or_else(|| compute_visible_data_bounds(dataset))
+        }
+        AxisZoomMode::FitAll => compute_visible_data_bounds(dataset),
+        AxisZoomMode::Manual => {
+            compute_visible_window_bounds(dataset, viewport.x_min, viewport.x_max)
+                .or_else(|| compute_visible_data_bounds(dataset))
+        }
     }
 }
 

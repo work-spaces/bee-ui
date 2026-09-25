@@ -43,10 +43,12 @@ impl PlotControlPanel {
 
         ui.horizontal_wrapped(|panel_ui| {
             let mut follow_newest = viewport.follow == FollowMode::PinnedToLatest;
-            if panel_ui
-                .checkbox(&mut follow_newest, "Follow newest")
-                .changed()
-            {
+            let follow_response = panel_ui
+                .checkbox(&mut follow_newest, "Follow newest (L)")
+                .on_hover_text(
+                    "Pin the right edge to the latest sample. Toggle with keyboard shortcut `L`.",
+                );
+            if follow_response.changed() {
                 viewport.follow = if follow_newest {
                     FollowMode::PinnedToLatest
                 } else {
@@ -122,7 +124,10 @@ impl PlotControlPanel {
             if viewport.follow == FollowMode::Free
                 && props.has_new_data
                 && let Some(bounds) = data_bounds
-                && panel_ui.button("Go Live").clicked()
+                && panel_ui
+                    .button("Go Live")
+                    .on_hover_text("Jump to the newest samples and re-enable follow mode.")
+                    .clicked()
             {
                 viewport.follow = FollowMode::PinnedToLatest;
                 viewport.x_mode = AxisZoomMode::Manual;
@@ -156,7 +161,11 @@ impl PlotControlPanel {
                         .text("range")
                         .logarithmic(true);
 
-                if panel_ui.add(slider).changed() {
+                if panel_ui
+                    .add(slider)
+                    .on_hover_text("Visible X span. Changing this unpins follow mode.")
+                    .changed()
+                {
                     viewport.follow = FollowMode::Free;
                     viewport.x_mode = AxisZoomMode::Manual;
                     viewport.set_x_window_size_manual(
@@ -192,7 +201,11 @@ impl PlotControlPanel {
                         let slider = egui::Slider::new(&mut next_start, limits.min_x..=max_start)
                             .text("offset");
 
-                        if panel_ui.add(slider).changed() {
+                        if panel_ui
+                            .add(slider)
+                            .on_hover_text("Pan horizontally within clamped data bounds. Changing this unpins follow mode.")
+                            .changed()
+                        {
                             viewport.follow = FollowMode::Free;
                             viewport.x_mode = AxisZoomMode::Manual;
                             viewport.set_x_start_manual(
@@ -220,7 +233,10 @@ impl PlotControlPanel {
         });
 
         ui.horizontal(|panel_ui| {
-            if panel_ui.button("Fit X").clicked()
+            if panel_ui
+                .button("Fit X (X)")
+                .on_hover_text("Fit X to all available data. Keyboard shortcut: `X`.")
+                .clicked()
                 && let Some(bounds) = data_bounds
             {
                 viewport.follow = FollowMode::Free;
@@ -229,7 +245,11 @@ impl PlotControlPanel {
                 response.changed = true;
             }
 
-            if panel_ui.button("Fit Y").clicked() {
+            if panel_ui
+                .button("Fit Y (Y)")
+                .on_hover_text("Fit Y using the selected Y mode. Keyboard shortcut: `Y`.")
+                .clicked()
+            {
                 if let Some(bounds) =
                     y_bounds_for_mode(dataset, viewport, viewport.y_mode).or(visible_bounds)
                 {
@@ -241,7 +261,10 @@ impl PlotControlPanel {
                 }
             }
 
-            if panel_ui.button("Fit XY").clicked()
+            if panel_ui
+                .button("Fit XY (F)")
+                .on_hover_text("Fit both axes to visible data. Keyboard shortcut: `F`.")
+                .clicked()
                 && let Some(bounds) = data_bounds
             {
                 viewport.follow = FollowMode::Free;

@@ -484,6 +484,23 @@ mod tests {
         ])
     }
 
+    fn sparse_dataset() -> TimeSeriesDataset {
+        TimeSeriesDataset::new(vec![
+            TimeSeries::new("single", "Single").with_points(vec![PlotPoint::new(42.0, 5.0)]),
+        ])
+    }
+
+    fn dense_dataset() -> TimeSeriesDataset {
+        let points: Vec<PlotPoint> = (0..=200)
+            .map(|x| {
+                let x = x as f64;
+                PlotPoint::new(x, (x * 0.1).sin() * 10.0)
+            })
+            .collect();
+
+        TimeSeriesDataset::new(vec![TimeSeries::new("dense", "Dense").with_points(points)])
+    }
+
     #[test]
     fn computes_global_bounds_across_all_series() {
         let dataset = sample_dataset();
@@ -580,5 +597,169 @@ mod tests {
 
         assert!(viewport.x_min >= limits.min_x - 1e-9);
         assert!(viewport.x_max <= limits.max_x + 1e-9);
+    }
+
+    #[test]
+    fn apply_modes_noops_for_empty_dataset() {
+        let dataset = TimeSeriesDataset::default();
+        let mut viewport = ViewportState::default();
+        let before = viewport;
+
+        let bounds = viewport.apply_modes_for_dataset(&dataset, DEFAULT_MIN_MARGIN_X);
+
+        assert!(bounds.is_none());
+        assert_eq!(viewport, before);
+    }
+
+    #[test]
+    fn sparse_dataset_clamps_x_window_to_margin_bounds() {
+        let dataset = sparse_dataset();
+        let mut viewport = ViewportState {
+            x_mode: AxisZoomMode::Manual,
+            follow: FollowMode::Free,
+            x_min: -100.0,
+            x_max: -90.0,
+            x_window_size: 10.0,
+            ..ViewportState::default()
+        };
+
+        let bounds = viewport
+            .apply_modes_for_dataset(&dataset, DEFAULT_MIN_MARGIN_X)
+            .expect("expected data bounds");
+
+        let limits =
+            compute_x_navigation_limits(bounds.x_min, bounds.x_max, 10.0, DEFAULT_MIN_MARGIN_X)
+                .expect("limits");
+
+        assert!((viewport.x_min - limits.min_x).abs() <= 1e-9);
+        assert!((viewport.x_max - limits.max_x).abs() <= 1e-9);
+        assert!(viewport.x_max > viewport.x_min);
+    }
+
+    #[test]
+    fn dense_dataset_manual_view_is_clamped_when_far_outside_data() {
+        let dataset = dense_dataset();
+        let mut viewport = ViewportState {
+            x_mode: AxisZoomMode::Manual,
+            follow: FollowMode::Free,
+            x_min: -80.0,
+            x_max: -70.0,
+            x_window_size: 10.0,
+            ..ViewportState::default()
+        };
+
+        let bounds = viewport
+            .apply_modes_for_dataset(&dataset, 0.5)
+            .expect("expected data bounds");
+
+        let limits =
+            compute_x_navigation_limits(bounds.x_min, bounds.x_max, viewport.x_window_size, 0.5)
+                .expect("limits");
+
+        assert!((viewport.x_min - limits.min_x).abs() <= 1e-9);
+        assert!((viewport.x_max - (limits.min_x + viewport.x_window_size)).abs() <= 1e-9);
+    }
+
+    #[test]
+    fn manual_x_bounds_switches_follow_to_free() {
+        let mut viewport = ViewportState {
+            x_mode: AxisZoomMode::Manual,
+            follow: FollowMode::PinnedToLatest,
+            x_min: 0.0,
+            x_max: 4.0,
+            x_window_size: 4.0,
+            ..ViewportState::default()
+        };
+
+        let changed = viewport.set_manual_x_bounds(2.0, 6.0, 0.0, 20.0, DEFAULT_MIN_MARGIN_X);
+
+        assert!(changed);
+        assert_eq!(viewport.follow, FollowMode::Free);
+        assert_eq!(viewport.x_mode, AxisZoomMode::Manual);
+    }
+
+    #[test]
+    fn pinned_follow_tracks_newest_data_when_dataset_extends() {
+        let mut viewport = ViewportState {
+            x_mode: AxisZoomMode::Manual,
+            y_mode: AxisZoomMode::FitVisible,
+            follow: FollowMode::PinnedToLatest,
+            x_min: 6.0,
+            x_max: 10.0,
+            x_window_size: 4.0,
+            ..ViewportState::default()
+        };
+
+        let first =
+            TimeSeriesDataset::new(vec![TimeSeries::new("live", "Live").with_points(vec![
+                PlotPoint::new(0.0, 1.0),
+                PlotPoint::new(5.0, 1.1),
+                PlotPoint::new(10.0, 0.9),
+            ])]);
+
+        viewport.apply_modes_for_dataset(&first, DEFAULT_MIN_MARGIN_X);
+        assert!((viewport.x_max - 10.0).abs() <= 1e-9);
+
+        let second =
+            TimeSeriesDataset::new(vec![TimeSeries::new("live", "Live").with_points(vec![
+                PlotPoint::new(0.0, 1.0),
+                PlotPoint::new(10.0, 0.9),
+                PlotPoint::new(15.0, 1.2),
+                PlotPoint::new(22.0, 1.4),
+            ])]);
+
+        viewport.apply_modes_for_dataset(&second, DEFAULT_MIN_MARGIN_X);
+
+        assert!((viewport.x_max - 22.0).abs() <= 1e-9);
+        assert!((viewport.x_window_size - 4.0).abs() <= 1e-9);
+        assert!((viewport.x_min - 18.0).abs() <= 1e-9);
+    }
+
+    #[test]
+    fn fit_all_y_excludes_hidden_series() {
+        let dataset = sample_dataset();
+        let mut viewport = ViewportState {
+            x_mode: AxisZoomMode::FitAll,
+            y_mode: AxisZoomMode::FitAll,
+            ..ViewportState::default()
+        };
+
+        viewport.apply_modes_for_dataset(&dataset, DEFAULT_MIN_MARGIN_X);
+
+        assert_eq!(viewport.y_min, 1.0);
+        assert_eq!(viewport.y_max, 3.0);
+    }
+
+    #[test]
+    fn fit_x_uses_all_series_extent_including_hidden() {
+        let dataset = TimeSeriesDataset::new(vec![
+            TimeSeries::new("visible", "Visible")
+                .with_points(vec![PlotPoint::new(0.0, 1.0), PlotPoint::new(2.0, 2.0)]),
+            TimeSeries::new("hidden", "Hidden")
+                .visible(false)
+                .with_points(vec![PlotPoint::new(40.0, -1.0), PlotPoint::new(50.0, -2.0)]),
+        ]);
+
+        let mut viewport = ViewportState {
+            x_mode: AxisZoomMode::FitAll,
+            y_mode: AxisZoomMode::Manual,
+            ..ViewportState::default()
+        };
+
+        viewport.apply_modes_for_dataset(&dataset, DEFAULT_MIN_MARGIN_X);
+
+        assert_eq!(viewport.x_min, 0.0);
+        assert_eq!(viewport.x_max, 50.0);
+    }
+
+    #[test]
+    fn navigation_margin_uses_max_of_ratio_and_minimum() {
+        let ratio_limits =
+            compute_x_navigation_limits(10.0, 20.0, 4.0, 0.01).expect("ratio limits");
+        assert!((ratio_limits.margin_x - 0.2).abs() <= 1e-9);
+
+        let minimum_limits =
+            compute_x_navigation_limits(10.0, 20.0, 1.0, 0.5).expect("minimum limits");
+        assert!((minimum_limits.margin_x - 0.5).abs() <= 1e-9);
     }
 }
