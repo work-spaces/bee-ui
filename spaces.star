@@ -94,7 +94,8 @@ def cargo_add(name: str, working_directory: str = ".", rule_deps = []):
         args = ["clippy", "--workspace", "--all-targets"],
         deps = cargo_deps,
         working_directory = working_directory,
-        help = "cargo clippy for the bee-ui workspace",
+        help = "cargo clippy for the bee-ui workspace --",
+        log_level = "Passthrough",
     )
 
     run_add_exec(

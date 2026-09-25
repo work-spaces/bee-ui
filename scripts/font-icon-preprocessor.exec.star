@@ -315,6 +315,7 @@ def _render_font_family(lines: list[str], enum_name: str, entries: list[dict]):
     lines.append("}")
     lines.append("")
     lines.append("impl {} {{".format(enum_name))
+    lines.append("    #[allow(dead_code)]")
     lines.append("    pub const ALL: &'static [Self] = &[")
     for entry in entries:
         lines.append("        Self::{},".format(entry["variant"]))

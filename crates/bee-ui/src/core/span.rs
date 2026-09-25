@@ -258,11 +258,10 @@ impl SpanTextStyle {
             text = text.size(size);
         }
 
-        if let Some(font) = &self.font {
-            if let Some(family) = font.resolve_family(ctx) {
+        if let Some(font) = &self.font
+            && let Some(family) = font.resolve_family(ctx) {
                 text = text.family(family);
             }
-        }
 
         if self.strong {
             text = text.strong();
@@ -707,15 +706,15 @@ impl From<&RichText> for String {
     }
 }
 
-impl Into<egui::WidgetText> for RichText {
-    fn into(self) -> egui::WidgetText {
-        self.plain_text().into()
+impl From<RichText> for egui::WidgetText {
+    fn from(val: RichText) -> Self {
+        val.plain_text().into()
     }
 }
 
-impl Into<egui::WidgetText> for &RichText {
-    fn into(self) -> egui::WidgetText {
-        self.plain_text().into()
+impl From<&RichText> for egui::WidgetText {
+    fn from(val: &RichText) -> Self {
+        val.plain_text().into()
     }
 }
 

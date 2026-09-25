@@ -16,19 +16,10 @@ use crate::{
     theme::fonts::{self, FontFace},
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct EguiBackend {
     row_item_spacing_stack: Vec<egui::Vec2>,
     theme: UiTheme,
-}
-
-impl Default for EguiBackend {
-    fn default() -> Self {
-        Self {
-            row_item_spacing_stack: Vec::new(),
-            theme: UiTheme::default(),
-        }
-    }
 }
 
 #[allow(dead_code)]
@@ -92,11 +83,6 @@ impl SpanRenderDefaults {
 
     fn strong(mut self) -> Self {
         self.force_strong = true;
-        self
-    }
-
-    fn underline(mut self) -> Self {
-        self.force_underline = true;
         self
     }
 }
@@ -432,11 +418,9 @@ impl EguiBackend {
                 SpanRun::Text(text) if !text.text.is_empty() => {
                     has_text = true;
                 }
-                SpanRun::Icon(icon) => {
-                    if first_icon.is_none() {
-                        first_icon = Some(icon);
-                        icon_before_text = !has_text;
-                    }
+                SpanRun::Icon(icon) if first_icon.is_none() => {
+                    first_icon = Some(icon);
+                    icon_before_text = !has_text;
                 }
                 _ => {}
             }
@@ -934,8 +918,10 @@ impl Backend for EguiBackend {
                         egui_table::TableState::load(table_ui.ctx(), table_id).is_some();
 
                     if needs_init || !has_state {
-                        let mut initial_state = egui_table::TableState::default();
-                        initial_state.parent_width = Some(parent_width);
+                        let mut initial_state = egui_table::TableState {
+                            parent_width: Some(parent_width),
+                            ..Default::default()
+                        };
                         for (index, column) in columns.iter().enumerate() {
                             initial_state
                                 .col_widths
@@ -1657,7 +1643,7 @@ impl Backend for EguiBackend {
             {
                 let visuals = scope_ui.visuals_mut();
                 let rounded = corner_radius(self.theme.radius.pill);
-                let border = egui::Stroke::new(1.0, tone.border);
+                let border = egui::Stroke::new(1.0_f32, tone.border);
 
                 visuals.handle_shape = egui::style::HandleShape::Circle;
 

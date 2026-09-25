@@ -609,11 +609,10 @@ impl<'a> UiRoot<'a> {
                 SemanticNode::Text(text) => self.backend.render_text(ui, text),
                 SemanticNode::Button(button) => {
                     let response = self.backend.render_button(ui, button);
-                    if response.clicked() {
-                        if let Some(on_click) = button.on_click {
+                    if response.clicked()
+                        && let Some(on_click) = button.on_click {
                             on_click(ui.ctx());
                         }
-                    }
                 }
                 SemanticNode::Alert(alert) => self.backend.render_alert(ui, alert),
                 SemanticNode::Progress(progress) => self.backend.render_progress(ui, progress),
@@ -632,11 +631,10 @@ impl<'a> UiRoot<'a> {
                 }
                 SemanticNode::CloseButton(close_button) => {
                     let response = self.backend.render_close_button(ui, close_button);
-                    if response.clicked() {
-                        if let Some(on_click) = close_button.on_click {
+                    if response.clicked()
+                        && let Some(on_click) = close_button.on_click {
                             on_click(ui.ctx());
                         }
-                    }
                 }
                 SemanticNode::Pagination(pagination) => {
                     let clicked = self.backend.render_pagination(ui, pagination);
@@ -685,11 +683,10 @@ impl<'a> UiRoot<'a> {
                 }
                 SemanticNode::Navbar(navbar) => {
                     let result = self.backend.render_navbar(ui, navbar);
-                    if result.brand_clicked {
-                        if let Some(on_brand_click) = navbar.on_brand_click {
+                    if result.brand_clicked
+                        && let Some(on_brand_click) = navbar.on_brand_click {
                             on_brand_click(ui.ctx());
                         }
-                    }
 
                     for index in result.clicked_items {
                         if let Some(on_click) =
@@ -729,11 +726,10 @@ impl<'a> UiRoot<'a> {
                         form_control.value,
                         &form_control.props,
                     );
-                    if changed {
-                        if let Some(on_change) = form_control.props.on_change {
+                    if changed
+                        && let Some(on_change) = form_control.props.on_change {
                             on_change(ui.ctx());
                         }
-                    }
                 }
                 SemanticNode::FormSelect(form_select) => {
                     let changed = self.backend.render_form_select(
@@ -741,31 +737,28 @@ impl<'a> UiRoot<'a> {
                         form_select.selected_index,
                         &form_select.props,
                     );
-                    if changed {
-                        if let Some(on_change) = form_select.props.on_change {
+                    if changed
+                        && let Some(on_change) = form_select.props.on_change {
                             on_change(ui.ctx());
                         }
-                    }
                 }
                 SemanticNode::FormCheck(form_check) => {
                     let changed =
                         self.backend
                             .render_form_check(ui, form_check.checked, &form_check.props);
-                    if changed {
-                        if let Some(on_change) = form_check.props.on_change {
+                    if changed
+                        && let Some(on_change) = form_check.props.on_change {
                             on_change(ui.ctx());
                         }
-                    }
                 }
                 SemanticNode::FormRange(form_range) => {
                     let changed =
                         self.backend
                             .render_form_range(ui, form_range.value, &form_range.props);
-                    if changed {
-                        if let Some(on_change) = form_range.props.on_change {
+                    if changed
+                        && let Some(on_change) = form_range.props.on_change {
                             on_change(ui.ctx());
                         }
-                    }
                 }
                 SemanticNode::FloatingLabel(floating_label) => {
                     let changed = self.backend.render_floating_label(
@@ -773,11 +766,10 @@ impl<'a> UiRoot<'a> {
                         floating_label.value,
                         &floating_label.props,
                     );
-                    if changed {
-                        if let Some(on_change) = floating_label.props.on_change {
+                    if changed
+                        && let Some(on_change) = floating_label.props.on_change {
                             on_change(ui.ctx());
                         }
-                    }
                 }
                 SemanticNode::ValidationFeedback(validation_feedback) => self
                     .backend

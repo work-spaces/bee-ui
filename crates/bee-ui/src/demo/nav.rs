@@ -19,7 +19,7 @@ pub(super) fn render_demo_nav(ui: &mut UiRoot<'_>, active_view: DemoView) {
             let mut views = ListGroup::new().flush(true);
             for view in DemoView::ALL {
                 views.push_item(
-                    ListGroupItem::new(format!("{}", view.title(),))
+                    ListGroupItem::new(view.title().to_string())
                         .active(view == active_view)
                         .on_click(view_select_handler(view)),
                 );
