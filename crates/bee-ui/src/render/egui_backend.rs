@@ -1470,24 +1470,30 @@ impl Backend for EguiBackend {
             .theme
             .resolve_form_label_style(props.variant, props.muted || props.required);
 
-        ui.horizontal(|label_ui| {
-            Self::render_span_freeform(
-                label_ui,
-                &props.text,
-                SpanRenderDefaults::new(SpanBaseline::PlainText)
-                    .color(style.text)
-                    .size(style.text_size),
-                &self.theme,
-            );
-
-            if props.required {
-                label_ui.label(
-                    egui::RichText::new("*")
-                        .color(style.required_text)
+        let response = ui
+            .horizontal(|label_ui| {
+                Self::render_span_freeform(
+                    label_ui,
+                    &props.text,
+                    SpanRenderDefaults::new(SpanBaseline::PlainText)
+                        .color(style.text)
                         .size(style.text_size),
+                    &self.theme,
                 );
-            }
-        });
+
+                if props.required {
+                    label_ui.label(
+                        egui::RichText::new("*")
+                            .color(style.required_text)
+                            .size(style.text_size),
+                    );
+                }
+            })
+            .response;
+
+        if let Some(hover_text) = &props.hover_text {
+            response.on_hover_text(hover_text.as_str());
+        }
     }
 
     fn render_form_text(&mut self, ui: &mut egui::Ui, props: &FormTextProps) {
@@ -1597,21 +1603,27 @@ impl Backend for EguiBackend {
                 .size(style.text_size),
         );
 
-        match props.kind {
-            FormCheckKind::Checkbox => ui
-                .add_enabled(!props.disabled, egui::Checkbox::new(checked, label))
-                .changed(),
+        let response = match props.kind {
+            FormCheckKind::Checkbox => {
+                ui.add_enabled(!props.disabled, egui::Checkbox::new(checked, label))
+            }
             FormCheckKind::Radio => {
-                let response =
+                let mut response =
                     ui.add_enabled(!props.disabled, egui::RadioButton::new(*checked, label));
                 if response.clicked() && !*checked {
                     *checked = true;
-                    true
-                } else {
-                    false
+                    response.mark_changed();
                 }
+                response
             }
+        };
+
+        let changed = response.changed();
+        if let Some(hover_text) = &props.hover_text {
+            response.on_hover_text(hover_text.as_str());
         }
+
+        changed
     }
 
     fn render_form_range(
@@ -1631,9 +1643,10 @@ impl Backend for EguiBackend {
         };
 
         let (min, max) = props.normalized_bounds();
-        let step = f64::from(props.normalized_step());
+        let step = props.resolved_step().map(f64::from);
 
         ui.scope(|scope_ui| {
+            let available_width = scope_ui.available_width();
             {
                 let spacing = scope_ui.spacing_mut();
                 spacing.item_spacing.x = style.label_gap;
@@ -1678,35 +1691,58 @@ impl Backend for EguiBackend {
                 visuals.widgets.noninteractive.corner_radius = rounded;
             }
 
-            let mut slider = egui::Slider::new(value, min..=max)
-                .step_by(step)
-                .show_value(props.show_value);
+            let mut slider = egui::Slider::new(value, min..=max).show_value(props.show_value);
+            if let Some(step) = step {
+                slider = slider.step_by(step);
+            }
 
+            let mut label_text = None;
             if let Some(label) = &props.label {
                 let text_color = if props.disabled {
                     style.disabled_text
                 } else {
                     style.text
                 };
-                slider = slider.text(Self::span_to_widget_text(
+                let text = Self::span_to_widget_text(
                     scope_ui,
                     label,
                     SpanRenderDefaults::new(SpanBaseline::ControlLabel)
                         .color(text_color)
                         .size(style.text_size),
-                ));
+                );
+                label_text = Some(text.clone());
+                slider = slider.text(text);
             }
 
-            if let Some(width) = props.width {
-                scope_ui
-                    .add_enabled_ui(!props.disabled, |enabled_ui| {
-                        enabled_ui.add_sized(egui::vec2(normalize_non_negative(width), 0.0), slider)
-                    })
-                    .inner
-                    .changed()
+            // `egui::Slider` sizes its track from `Spacing::slider_width` and ignores the
+            // size passed to `add_sized`, so derive the track width from the requested outer
+            // width minus the value display and label.
+            let outer_width = if props.fill_width {
+                Some(available_width)
             } else {
-                scope_ui.add_enabled(!props.disabled, slider).changed()
+                props.width.map(normalize_non_negative)
+            };
+
+            if let Some(outer_width) = outer_width {
+                let item_gap = scope_ui.spacing().item_spacing.x;
+                let mut reserved = 0.0;
+                if props.show_value {
+                    reserved += scope_ui.spacing().interact_size.x + item_gap;
+                }
+                if let Some(text) = label_text {
+                    let galley = text.into_galley(
+                        scope_ui,
+                        Some(egui::TextWrapMode::Extend),
+                        f32::INFINITY,
+                        egui::TextStyle::Body,
+                    );
+                    reserved += galley.size().x + item_gap;
+                }
+
+                scope_ui.spacing_mut().slider_width = (outer_width - reserved).max(1.0);
             }
+
+            scope_ui.add_enabled(!props.disabled, slider).changed()
         })
         .inner
     }

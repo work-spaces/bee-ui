@@ -255,6 +255,12 @@ impl<'a> UiRoot<'a> {
         self.render_with_central_panel_frame(egui::Frame::central_panel(&self.ctx.style()));
     }
 
+    pub(crate) fn render_in_ui(&mut self, ui: &mut egui::Ui) {
+        let mut nodes = self.take_root_nodes();
+        self.table_render_seq = 0;
+        self.render_nodes(ui, &mut nodes);
+    }
+
     pub(crate) fn render_with_central_panel_frame(&mut self, frame: egui::Frame) {
         let mut nodes = self.take_root_nodes();
         self.table_render_seq = 0;

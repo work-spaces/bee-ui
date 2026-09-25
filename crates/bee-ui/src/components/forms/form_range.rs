@@ -8,12 +8,17 @@ pub struct FormRangeProps {
     pub min: f32,
     pub max: f32,
     pub step: f32,
+    /// Mirrors HTML `step="any"`: the value is continuous and never snapped to `step`.
+    pub step_any: bool,
     pub show_value: bool,
     pub label: Option<Span>,
     pub variant: Variant,
     pub validation: FormValidationState,
     pub disabled: bool,
+    /// Total outer width (track + value display + label).
     pub width: Option<f32>,
+    /// Stretch to the available width of the parent (takes precedence over `width`).
+    pub fill_width: bool,
     pub on_change: Option<fn(&egui::Context)>,
 }
 
@@ -23,12 +28,14 @@ impl FormRangeProps {
             min,
             max,
             step: 1.0,
+            step_any: false,
             show_value: true,
             label: None,
             variant: Variant::Primary,
             validation: FormValidationState::None,
             disabled: false,
             width: None,
+            fill_width: false,
             on_change: None,
         }
     }
@@ -41,6 +48,17 @@ impl FormRangeProps {
 
     pub fn step(mut self, step: f32) -> Self {
         self.step = step;
+        self.step_any = false;
+        self
+    }
+
+    pub fn step_any(mut self) -> Self {
+        self.step_any = true;
+        self
+    }
+
+    pub fn fill_width(mut self, fill_width: bool) -> Self {
+        self.fill_width = fill_width;
         self
     }
 
@@ -102,6 +120,11 @@ impl FormRangeProps {
             1.0
         }
     }
+
+    /// Step to snap values to, or `None` when the range is continuous (`step_any`).
+    pub fn resolved_step(&self) -> Option<f32> {
+        (!self.step_any).then(|| self.normalized_step())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -109,12 +132,14 @@ pub struct FormRange {
     pub min: f32,
     pub max: f32,
     pub step: f32,
+    pub step_any: bool,
     pub show_value: bool,
     pub label: Option<Span>,
     pub variant: Variant,
     pub validation: FormValidationState,
     pub disabled: bool,
     pub width: Option<f32>,
+    pub fill_width: bool,
     pub on_change: Option<fn(&egui::Context)>,
 }
 
@@ -124,12 +149,14 @@ impl FormRange {
             min,
             max,
             step: 1.0,
+            step_any: false,
             show_value: true,
             label: None,
             variant: Variant::Primary,
             validation: FormValidationState::None,
             disabled: false,
             width: None,
+            fill_width: false,
             on_change: None,
         }
     }
@@ -142,6 +169,19 @@ impl FormRange {
 
     pub fn step(mut self, step: f32) -> Self {
         self.step = step;
+        self.step_any = false;
+        self
+    }
+
+    /// Continuous range (HTML `step="any"`); values are never snapped.
+    pub fn step_any(mut self) -> Self {
+        self.step_any = true;
+        self
+    }
+
+    /// Stretch the range to fill the available width of its parent.
+    pub fn fill_width(mut self, fill_width: bool) -> Self {
+        self.fill_width = fill_width;
         self
     }
 
@@ -199,12 +239,14 @@ impl From<FormRange> for FormRangeProps {
             min: value.min,
             max: value.max,
             step: value.step,
+            step_any: value.step_any,
             show_value: value.show_value,
             label: value.label,
             variant: value.variant,
             validation: value.validation,
             disabled: value.disabled,
             width: value.width,
+            fill_width: value.fill_width,
             on_change: value.on_change,
         }
     }
@@ -216,12 +258,14 @@ impl From<FormRangeProps> for FormRange {
             min: value.min,
             max: value.max,
             step: value.step,
+            step_any: value.step_any,
             show_value: value.show_value,
             label: value.label,
             variant: value.variant,
             validation: value.validation,
             disabled: value.disabled,
             width: value.width,
+            fill_width: value.fill_width,
             on_change: value.on_change,
         }
     }
@@ -251,6 +295,17 @@ mod tests {
         assert_eq!(range.label, Some(Span::from("Threshold")));
         assert_eq!(range.validation, FormValidationState::Valid);
         assert_eq!(range.variant, Variant::Success);
+    }
+
+    #[test]
+    fn form_range_step_any_and_fill_width_builders() {
+        let props = FormRange::new(0.0, 1.0).step_any().fill_width(true).props();
+        assert!(props.step_any);
+        assert!(props.fill_width);
+        assert_eq!(props.resolved_step(), None);
+
+        let stepped = FormRange::new(0.0, 1.0).step_any().step(0.25).props();
+        assert_eq!(stepped.resolved_step(), Some(0.25));
     }
 
     #[test]

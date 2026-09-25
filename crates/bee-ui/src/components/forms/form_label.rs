@@ -6,6 +6,7 @@ pub struct FormLabelProps {
     pub variant: Variant,
     pub required: bool,
     pub muted: bool,
+    pub hover_text: Option<String>,
 }
 
 impl FormLabelProps {
@@ -15,6 +16,7 @@ impl FormLabelProps {
             variant: Variant::Primary,
             required: false,
             muted: false,
+            hover_text: None,
         }
     }
 
@@ -34,6 +36,11 @@ impl FormLabelProps {
 
     pub fn muted(mut self, muted: bool) -> Self {
         self.muted = muted;
+        self
+    }
+
+    pub fn hover_text(mut self, hover_text: impl Into<String>) -> Self {
+        self.hover_text = Some(hover_text.into());
         self
     }
 }
@@ -44,6 +51,7 @@ pub struct FormLabel {
     pub variant: Variant,
     pub required: bool,
     pub muted: bool,
+    pub hover_text: Option<String>,
 }
 
 impl FormLabel {
@@ -53,6 +61,7 @@ impl FormLabel {
             variant: Variant::Primary,
             required: false,
             muted: false,
+            hover_text: None,
         }
     }
 
@@ -72,6 +81,11 @@ impl FormLabel {
 
     pub fn muted(mut self, muted: bool) -> Self {
         self.muted = muted;
+        self
+    }
+
+    pub fn hover_text(mut self, hover_text: impl Into<String>) -> Self {
+        self.hover_text = Some(hover_text.into());
         self
     }
 
@@ -87,6 +101,7 @@ impl From<FormLabel> for FormLabelProps {
             variant: value.variant,
             required: value.required,
             muted: value.muted,
+            hover_text: value.hover_text,
         }
     }
 }
@@ -98,6 +113,7 @@ impl From<FormLabelProps> for FormLabel {
             variant: value.variant,
             required: value.required,
             muted: value.muted,
+            hover_text: value.hover_text,
         }
     }
 }

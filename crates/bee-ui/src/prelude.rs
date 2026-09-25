@@ -23,4 +23,4 @@ pub use crate::plot::{
     TimeSeriesDataset, TimeSeriesPlot, TimeSeriesPlotProps, TimeSeriesPlotResponse, ViewportState,
     downsample_min_max, prepare_line_points, select_visible_points, viewport_point_budget,
 };
-pub use crate::show_root;
+pub use crate::{show_in_ui, show_root};

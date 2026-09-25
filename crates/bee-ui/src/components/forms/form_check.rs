@@ -17,6 +17,7 @@ pub struct FormCheckProps {
     pub variant: Variant,
     pub validation: FormValidationState,
     pub disabled: bool,
+    pub hover_text: Option<String>,
     pub on_change: Option<fn(&egui::Context)>,
 }
 
@@ -28,6 +29,7 @@ impl FormCheckProps {
             variant: Variant::Primary,
             validation: FormValidationState::None,
             disabled: false,
+            hover_text: None,
             on_change: None,
         }
     }
@@ -65,6 +67,11 @@ impl FormCheckProps {
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    pub fn hover_text(mut self, hover_text: impl Into<String>) -> Self {
+        self.hover_text = Some(hover_text.into());
         self
     }
 
@@ -81,6 +88,7 @@ pub struct FormCheck {
     pub variant: Variant,
     pub validation: FormValidationState,
     pub disabled: bool,
+    pub hover_text: Option<String>,
     pub on_change: Option<fn(&egui::Context)>,
 }
 
@@ -92,6 +100,7 @@ impl FormCheck {
             variant: Variant::Primary,
             validation: FormValidationState::None,
             disabled: false,
+            hover_text: None,
             on_change: None,
         }
     }
@@ -129,6 +138,11 @@ impl FormCheck {
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    pub fn hover_text(mut self, hover_text: impl Into<String>) -> Self {
+        self.hover_text = Some(hover_text.into());
         self
     }
 
@@ -150,6 +164,7 @@ impl From<FormCheck> for FormCheckProps {
             variant: value.variant,
             validation: value.validation,
             disabled: value.disabled,
+            hover_text: value.hover_text,
             on_change: value.on_change,
         }
     }
@@ -163,6 +178,7 @@ impl From<FormCheckProps> for FormCheck {
             variant: value.variant,
             validation: value.validation,
             disabled: value.disabled,
+            hover_text: value.hover_text,
             on_change: value.on_change,
         }
     }

@@ -211,3 +211,13 @@ pub fn show_root<'a>(ctx: &egui::Context, f: impl FnOnce(&mut UiRoot<'a>)) {
     f(&mut ui_root);
     ui_root.render_with_central_panel();
 }
+
+/// Builds a semantic `runnerd-bs` tree and renders it inline into an existing `egui::Ui`.
+///
+/// Use this for reusable widgets that receive a parent `egui::Ui` (for example, from inside
+/// `UiRoot::raw`). Controlled state bound with `form_*` is written back before this returns.
+pub fn show_in_ui<'a>(ui: &mut egui::Ui, f: impl FnOnce(&mut UiRoot<'a>)) {
+    let mut ui_root = UiRoot::new(ui.ctx());
+    f(&mut ui_root);
+    ui_root.render_in_ui(ui);
+}
