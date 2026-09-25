@@ -1,4 +1,4 @@
-use runnerd_bs::prelude::*;
+use bee_ui::prelude::*;
 
 #[test]
 fn semantic_api_supports_nested_bootstrap_like_composition() {

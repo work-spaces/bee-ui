@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use runnerd_bs::{
+use bee_ui::{
     core::UiRoot,
     layout::Span,
     prelude::{Col, Row},

@@ -1,5 +1,5 @@
-use runnerd_bs::core::theme::{FormValidationState, NavItemState};
-use runnerd_bs::core::{UiTheme, Variant};
+use bee_ui::core::theme::{FormValidationState, NavItemState};
+use bee_ui::core::{UiTheme, Variant};
 
 fn all_variants() -> [Variant; 8] {
     [
@@ -63,12 +63,12 @@ fn component_style_resolvers_reflect_props() {
 
     let label_regular = theme.resolve_label_style(
         Variant::Secondary,
-        runnerd_bs::core::theme::TextSize::Medium,
+        bee_ui::core::theme::TextSize::Medium,
         false,
     );
     let label_muted = theme.resolve_label_style(
         Variant::Secondary,
-        runnerd_bs::core::theme::TextSize::Medium,
+        bee_ui::core::theme::TextSize::Medium,
         true,
     );
     assert_ne!(label_regular.text, label_muted.text);
@@ -125,7 +125,7 @@ fn label_style_uses_variant_text_when_not_muted() {
     for variant in all_variants() {
         let tone = theme.resolve_variant(variant);
         let label =
-            theme.resolve_label_style(variant, runnerd_bs::core::theme::TextSize::Medium, false);
+            theme.resolve_label_style(variant, bee_ui::core::theme::TextSize::Medium, false);
 
         assert_eq!(label.text, tone.text);
     }

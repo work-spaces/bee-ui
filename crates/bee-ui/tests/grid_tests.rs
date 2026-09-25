@@ -1,4 +1,4 @@
-use runnerd_bs::layout::{
+use bee_ui::layout::{
     GridColSpec, GridLayoutError, GridSpec, Span, compute_grid_lines, pack_grid_lines,
 };
 
