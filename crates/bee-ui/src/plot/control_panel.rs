@@ -13,9 +13,9 @@ use crate::{
 };
 
 const Y_MODE_OPTIONS: &[(AxisZoomMode, &str)] = &[
-    (AxisZoomMode::FitVisible, "Y Fit visible"),
-    (AxisZoomMode::FitAll, "Y Fit all"),
-    (AxisZoomMode::Manual, "Y Manual"),
+    (AxisZoomMode::FitVisible, "Fit "),
+    (AxisZoomMode::FitAll, "All "),
+    (AxisZoomMode::Manual, "Free"),
 ];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -229,14 +229,26 @@ fn build_panel(root: &mut UiRoot<'_>, values: &mut ControlValues, view: PanelVie
                     } else {
                         prelude::Variant::Secondary
                     };
-                    root.form_range(
-                        &mut values.x_window,
-                        normalized_range(view.x_window_enabled).variant(prelude::Variant::Primary),
-                    );
-                    root.form_range(
-                        &mut values.x_position,
-                        normalized_range(view.x_position_enabled).variant(position_variant),
-                    );
+
+                    root.hstack(HStack::new().gap(spacing.md), |root| {
+                        root.label(prelude::Label::new(
+                            prelude::RichText::new().icon(prelude::SvgIcon::Arrows),
+                        ));
+                        root.form_range(
+                            &mut values.x_window,
+                            normalized_range(view.x_window_enabled)
+                                .variant(prelude::Variant::Primary),
+                        );
+                    });
+                    root.hstack(HStack::new().gap(spacing.md), |root| {
+                        root.label(prelude::Label::new(
+                            prelude::RichText::new().icon(prelude::SvgIcon::InputCursor),
+                        ));
+                        root.form_range(
+                            &mut values.x_position,
+                            normalized_range(view.x_position_enabled).variant(position_variant),
+                        );
+                    });
                 });
             }
         });
