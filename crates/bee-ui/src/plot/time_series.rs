@@ -90,6 +90,8 @@ pub struct TimeSeriesPlotResponse {
     pub has_data: bool,
     pub has_new_data: bool,
     pub control_panel_changed: bool,
+    /// The control panel's Download button was clicked this pass.
+    pub download_clicked: bool,
 }
 
 pub struct TimeSeriesPlot;
@@ -263,58 +265,25 @@ impl TimeSeriesPlot {
             response.changed = true;
         }
 
-        if props.show_control_panel {
-            ui.add_space(6.0);
+        ui.add_space(4.0);
 
-            let control_panel_open_id = ui
-                .id()
-                .with(("time_series_control_panel_open", props.plot.id.as_str()));
+        let mut control_panel_props = props.control_panel.clone();
+        control_panel_props.has_new_data =
+            control_panel_props.has_new_data || response.has_new_data;
 
-            let mut control_panel_open = ui
-                .ctx()
-                .data_mut(|data| data.get_persisted::<bool>(control_panel_open_id))
-                .unwrap_or(true);
+        let control_panel_response = ui
+            .push_id(
+                ("time_series_control_panel", props.plot.id.as_str()),
+                |scoped_ui| {
+                    PlotControlPanel::show(scoped_ui, viewport, dataset, &control_panel_props)
+                },
+            )
+            .inner;
 
-            let toggle_label = if control_panel_open {
-                "Hide controls"
-            } else {
-                "Show controls"
-            };
-
-            if ui.small_button(toggle_label).clicked() {
-                control_panel_open = !control_panel_open;
-                response.changed = true;
-            }
-
-            ui.ctx()
-                .data_mut(|data| data.insert_persisted(control_panel_open_id, control_panel_open));
-
-            if control_panel_open {
-                ui.add_space(4.0);
-
-                let mut control_panel_props = props.control_panel.clone();
-                control_panel_props.has_new_data =
-                    control_panel_props.has_new_data || response.has_new_data;
-
-                let control_panel_response = ui
-                    .push_id(
-                        ("time_series_control_panel", props.plot.id.as_str()),
-                        |scoped_ui| {
-                            PlotControlPanel::show(
-                                scoped_ui,
-                                viewport,
-                                dataset,
-                                &control_panel_props,
-                            )
-                        },
-                    )
-                    .inner;
-
-                response.control_panel_changed = control_panel_response.changed;
-                response.changed |= control_panel_response.changed;
-                response.changed |= control_panel_response.go_live_clicked;
-            }
-        }
+        response.control_panel_changed = control_panel_response.changed;
+        response.download_clicked = control_panel_response.download_clicked;
+        response.changed |= control_panel_response.changed;
+        response.changed |= control_panel_response.go_live_clicked;
 
         response
     }

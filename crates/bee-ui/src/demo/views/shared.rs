@@ -285,9 +285,9 @@ pub(super) fn for_each_variant(mut render: impl FnMut(&'static str, Variant)) {
     }
 }
 
-pub(super) fn render_variant_gallery<'a, F>(ui: &mut UiRoot<'a>, mut render_item: F)
+pub(super) fn render_variant_gallery<F>(ui: &mut UiRoot<'_>, mut render_item: F)
 where
-    F: FnMut(&mut UiRoot<'a>, &'static str, Variant),
+    F: FnMut(&mut UiRoot<'_>, &'static str, Variant),
 {
     for &(label, variant) in variant_palette() {
         render_item(ui, label, variant);

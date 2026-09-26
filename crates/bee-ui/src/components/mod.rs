@@ -17,11 +17,14 @@ pub mod placeholder;
 pub mod progress;
 pub mod row;
 pub mod spinner;
+pub mod stack;
 pub mod state;
 pub mod table;
 pub mod text;
 
-pub use crate::core::{Icon, IconProps, SvgIcon};
+pub use crate::core::{
+    ChangeResponse, Icon, IconProps, ItemClickResponse, NavbarResponse, SvgIcon,
+};
 pub use alert::{Alert, AlertProps};
 pub use badge::{Badge, BadgeProps};
 pub use button::Button;
@@ -46,6 +49,7 @@ pub use placeholder::{Placeholder, PlaceholderProps};
 pub use progress::{Progress, ProgressProps};
 pub use row::{Row, RowProps};
 pub use spinner::{Spinner, SpinnerProps};
+pub use stack::HStack;
 pub use state::{ActiveIndexState, DisclosureState};
 pub use table::{Table, TableAutoSizeMode, TableProps, TableRow};
 pub use text::{Text, TextProps};

@@ -1,23 +1,27 @@
 use crate::core::UiRoot;
 
-impl<'a> UiRoot<'a> {
-    /// Appends a raw egui block to the semantic tree.
-    pub fn raw(&mut self, f: impl FnOnce(&mut egui::Ui) + 'a) {
-        self.interop_raw(f);
+impl UiRoot<'_> {
+    /// Runs `f` with direct access to the current `egui::Ui` and returns its value.
+    pub fn raw<R>(&mut self, f: impl FnOnce(&mut egui::Ui) -> R) -> R {
+        self.interop_raw(f)
     }
 
     /// Applies a temporary egui `Style` override while rendering a semantic subtree.
-    pub fn with_style_override(
+    pub fn with_style_override<R>(
         &mut self,
-        style_override: impl FnOnce(&mut egui::Style) + 'a,
-        f: impl FnOnce(&mut UiRoot<'a>),
-    ) {
-        self.interop_with_style_override(style_override, f);
+        style_override: impl FnOnce(&mut egui::Style),
+        f: impl FnOnce(&mut UiRoot<'_>) -> R,
+    ) -> R {
+        self.interop_with_style_override(style_override, f)
     }
 
     /// Applies a temporary egui theme variant (`Dark` or `Light`) while rendering a subtree.
-    pub fn with_theme_variant(&mut self, theme: egui::Theme, f: impl FnOnce(&mut UiRoot<'a>)) {
-        self.interop_with_theme_variant(theme, f);
+    pub fn with_theme_variant<R>(
+        &mut self,
+        theme: egui::Theme,
+        f: impl FnOnce(&mut UiRoot<'_>) -> R,
+    ) -> R {
+        self.interop_with_theme_variant(theme, f)
     }
 }
 

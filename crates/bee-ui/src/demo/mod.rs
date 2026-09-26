@@ -156,19 +156,17 @@ pub fn show_bootstrap_demo(ctx: &egui::Context) {
 
     let mut demo_state = state::load_demo_state(ctx);
 
-    {
-        let mut ui_root = UiRoot::new(ctx);
-        bootstrap_demo_container(&mut ui_root, &mut demo_state);
-        ui_root.render_with_central_panel_frame(
-            egui::Frame::central_panel(&ctx.style()).inner_margin(0),
-        );
-    }
+    show_root_with_frame(
+        ctx,
+        egui::Frame::central_panel(&ctx.style()).inner_margin(0),
+        |ui| bootstrap_demo_container(ui, &mut demo_state),
+    );
 
     state::store_demo_state(ctx, &demo_state);
 }
 
 /// Renders a view-based demo shell with left-side navigation and right-side focused content.
-fn bootstrap_demo_container<'a>(ui: &mut UiRoot<'a>, demo_state: &'a mut state::DemoState) {
+fn bootstrap_demo_container(ui: &mut UiRoot<'_>, demo_state: &mut state::DemoState) {
     let active_view = active_view(ui.context());
 
     ui.container(

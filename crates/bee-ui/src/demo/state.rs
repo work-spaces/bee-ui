@@ -524,14 +524,6 @@ pub(super) fn groups_button_events_clicked(ctx: &egui::Context) {
     set_last_action(ctx, "ButtonGroup (vertical): Events clicked");
 }
 
-pub(super) fn buttons_drain_pool_clicked(ctx: &egui::Context) {
-    set_last_action(ctx, "Button: Drain node pool triggered");
-}
-
-pub(super) fn buttons_retry_checks_clicked(ctx: &egui::Context) {
-    set_last_action(ctx, "Button: Retry failed checks triggered");
-}
-
 pub(super) fn list_group_overview_clicked(ctx: &egui::Context) {
     set_groups_active_list_item(ctx, 0);
     set_last_action(ctx, "ListGroup: Overview selected");
@@ -579,46 +571,4 @@ pub(super) fn navbar_alerts_clicked(ctx: &egui::Context) {
 pub(super) fn navbar_help_clicked(ctx: &egui::Context) {
     set_menus_active_navbar_item(ctx, "Help");
     set_last_action(ctx, "Navbar: Help clicked");
-}
-
-pub(super) fn dropdown_item_restart_clicked(ctx: &egui::Context) {
-    set_dropdown_primary_selection(ctx, "Restart worker");
-    set_last_action(ctx, "Dropdown: Restart worker selected");
-}
-
-pub(super) fn dropdown_item_reschedule_clicked(ctx: &egui::Context) {
-    set_dropdown_primary_selection(ctx, "Reschedule pod");
-    set_last_action(ctx, "Dropdown: Reschedule pod selected");
-}
-
-pub(super) fn dropdown_item_scale_clicked(ctx: &egui::Context) {
-    set_dropdown_primary_selection(ctx, "Scale deployment");
-    set_last_action(ctx, "Dropdown: Scale deployment selected");
-}
-
-pub(super) fn dropdown_uncontrolled_logs_clicked(ctx: &egui::Context) {
-    set_dropdown_primary_selection(ctx, "Tail logs");
-    set_dropdown_secondary_selection(ctx, "Tail logs");
-    set_last_action(ctx, "Dropdown (uncontrolled): Tail logs selected");
-}
-
-pub(super) fn dropdown_uncontrolled_events_clicked(ctx: &egui::Context) {
-    set_dropdown_primary_selection(ctx, "Inspect events");
-    set_dropdown_secondary_selection(ctx, "Inspect events");
-    set_last_action(ctx, "Dropdown (uncontrolled): Inspect events selected");
-}
-
-pub(super) fn table_row_scheduler_clicked(ctx: &egui::Context) {
-    set_selected_table_row(ctx, 0);
-    set_last_action(ctx, "Table: scheduler row clicked");
-}
-
-pub(super) fn table_row_api_gateway_clicked(ctx: &egui::Context) {
-    set_selected_table_row(ctx, 1);
-    set_last_action(ctx, "Table: api-gateway row clicked");
-}
-
-pub(super) fn table_row_worker_clicked(ctx: &egui::Context) {
-    set_selected_table_row(ctx, 2);
-    set_last_action(ctx, "Table: worker row clicked");
 }

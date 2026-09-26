@@ -3,7 +3,7 @@ use crate::prelude::*;
 use super::{super::state, shared};
 
 pub(super) fn render_view_tables(ui: &mut UiRoot<'_>) {
-    let selected_row = state::selected_table_row(ui.context()).min(shared::SERVICES.len() - 1);
+    let mut selected_row = state::selected_table_row(ui.context()).min(shared::SERVICES.len() - 1);
 
     ui.card(
         Card::new()
@@ -46,30 +46,42 @@ pub(super) fn render_view_tables(ui: &mut UiRoot<'_>) {
             .title("Composed example — interactive operations table")
             .outline()
             .footer(
-                "Features: striped, hover, active row, click callbacks, sticky columns, resizable columns, auto_size_mode(OnParentResize)",
+                "Features: striped, hover, active row, clicked_index(), sticky columns, resizable columns, auto_size_mode(OnParentResize)",
             ),
         |ui| {
-            ui.table(
-                Table::new()
-                    .variant(Variant::Primary)
-                    .headers([
-                        "Cluster",
-                        "Service",
-                        "Strategy",
-                        "Replicas",
-                        "P95 ms ↓",
-                        "Error % ↓",
-                        "Status",
-                    ])
-                    .striped_rows()
-                    .hoverable()
-                    .sticky_columns(2)
-                    .resizable_columns(true)
-                    .auto_size_mode(TableAutoSizeMode::OnParentResize)
-                    .row(service_row(0, selected_row))
-                    .row(service_row(1, selected_row))
-                    .row(service_row(2, selected_row)),
-            );
+            let clicked = ui
+                .table(
+                    Table::new()
+                        .variant(Variant::Primary)
+                        .headers([
+                            "Cluster",
+                            "Service",
+                            "Strategy",
+                            "Replicas",
+                            "P95 ms ↓",
+                            "Error % ↓",
+                            "Status",
+                        ])
+                        .striped_rows()
+                        .hoverable()
+                        .sticky_columns(2)
+                        .resizable_columns(true)
+                        .auto_size_mode(TableAutoSizeMode::OnParentResize)
+                        .row(service_row(0, selected_row))
+                        .row(service_row(1, selected_row))
+                        .row(service_row(2, selected_row)),
+                )
+                .clicked_index();
+
+            if let Some(row) = clicked.filter(|&row| row < shared::SERVICES.len()) {
+                selected_row = row;
+                let ctx = ui.context();
+                state::set_selected_table_row(ctx, row);
+                state::set_last_action(
+                    ctx,
+                    format!("Table: {} row clicked", shared::SERVICES[row].name),
+                );
+            }
         },
     );
 
@@ -128,11 +140,6 @@ pub(super) fn render_view_tables(ui: &mut UiRoot<'_>) {
 
 fn service_row(index: usize, selected_row: usize) -> TableRow {
     let service = shared::SERVICES[index];
-    let callback = match index {
-        0 => state::table_row_scheduler_clicked,
-        1 => state::table_row_api_gateway_clicked,
-        _ => state::table_row_worker_clicked,
-    };
 
     TableRow::new()
         .cells([
@@ -145,5 +152,4 @@ fn service_row(index: usize, selected_row: usize) -> TableRow {
             service.status.to_owned(),
         ])
         .active(selected_row == index)
-        .on_click(callback)
 }

@@ -5,27 +5,18 @@ use super::{
 };
 use crate::{
     UiRoot,
-    components::{Col, Container, FormCheck, FormLabel, FormRange, FormSelect, Row},
-    show_in_ui,
+    components::{
+        Button, Col, Container, DisclosureState, Dropdown, DropdownItem, FormRange, HStack, Row,
+    },
+    prelude, show_in_ui,
     theme::bootstrap_tokens,
 };
 
-const X_MODE_OPTIONS: &[(AxisZoomMode, &str)] = &[
-    (AxisZoomMode::FitAll, "Fit all"),
-    (AxisZoomMode::Manual, "Manual"),
-];
-
 const Y_MODE_OPTIONS: &[(AxisZoomMode, &str)] = &[
-    (AxisZoomMode::FitVisible, "Fit visible"),
-    (AxisZoomMode::FitAll, "Fit all"),
-    (AxisZoomMode::Manual, "Manual"),
+    (AxisZoomMode::FitVisible, "Y Fit visible"),
+    (AxisZoomMode::FitAll, "Y Fit all"),
+    (AxisZoomMode::Manual, "Y Manual"),
 ];
-
-const FOLLOW_HINT: &str =
-    "Pin the right edge to the latest sample. Toggle with keyboard shortcut `L`.";
-const X_WINDOW_HINT: &str = "Visible X span. Changing this keeps live pin if currently pinned.";
-const X_POSITION_HINT: &str =
-    "Pan horizontally within clamped data bounds. Changing this unpins follow mode.";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlotControlPanelProps {
@@ -46,6 +37,9 @@ impl Default for PlotControlPanelProps {
 pub struct PlotControlPanelResponse {
     pub changed: bool,
     pub go_live_clicked: bool,
+    /// The Download button was clicked this pass. The panel doesn't export anything itself;
+    /// the host decides what to download.
+    pub download_clicked: bool,
 }
 
 pub struct PlotControlPanel;
@@ -67,50 +61,41 @@ impl PlotControlPanel {
         let position_scale =
             data_bounds.and_then(|bounds| x_position_scale(bounds, viewport, props.min_margin_x));
 
+        let visibility_id = ui.next_auto_id().with("visible");
+        let is_visible = ui
+            .ctx()
+            .data(|data| data.get_temp::<bool>(visibility_id))
+            .unwrap_or(true);
+
+        let following = viewport.follow == FollowMode::PinnedToLatest;
         let initial = ControlValues {
-            follow_newest: viewport.follow == FollowMode::PinnedToLatest,
-            x_mode_index: mode_index(X_MODE_OPTIONS, viewport.x_mode),
             y_mode_index: mode_index(Y_MODE_OPTIONS, viewport.y_mode),
             x_window: window_scale.map_or(0.0, |scale| scale.normalize(viewport.x_window_size)),
-            x_position: position_scale.map_or(0.0, |scale| scale.normalize(viewport.x_min)),
+            x_position: match position_scale {
+                Some(_) if following => X_POSITION_FOLLOW,
+                Some(scale) => scale.normalize(viewport.x_min),
+                None => 0.0,
+            },
         };
+
         let view = PanelView {
-            x_mode_placeholder: mode_label(viewport.x_mode),
+            is_visible,
             y_mode_placeholder: mode_label(viewport.y_mode),
+            y_mode_dropdown_id: ui.next_auto_id().with("y_mode_dropdown"),
             x_window_enabled: window_scale.is_some(),
             x_position_enabled: position_scale.is_some(),
         };
 
         let mut edited = initial;
-        let values = &mut edited;
-        show_in_ui(ui, move |root| build_panel(root, values, view));
+        let clicks = show_in_ui(ui, |root| build_panel(root, &mut edited, view));
 
-        if edited.follow_newest != initial.follow_newest {
-            viewport.follow = if edited.follow_newest {
-                FollowMode::PinnedToLatest
-            } else {
-                FollowMode::Free
-            };
-
-            if edited.follow_newest {
-                viewport.x_mode = AxisZoomMode::Manual;
-                if let Some(bounds) = data_bounds {
-                    viewport.pin_x_to_latest(bounds.x_min, bounds.x_max, props.min_margin_x);
-                }
-            }
-
-            response.changed = true;
+        if clicks.visibility_toggled {
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(visibility_id, !is_visible));
+            ui.ctx().request_repaint();
         }
 
-        if edited.x_mode_index != initial.x_mode_index
-            && let Some(&(x_mode, _)) = X_MODE_OPTIONS.get(edited.x_mode_index)
-        {
-            viewport.x_mode = x_mode;
-            if let Some(bounds) = data_bounds {
-                apply_x_mode(viewport, x_mode, bounds, props.min_margin_x);
-            }
-            response.changed = true;
-        }
+        response.download_clicked = clicks.download;
 
         if edited.y_mode_index != initial.y_mode_index
             && let Some(&(y_mode, _)) = Y_MODE_OPTIONS.get(edited.y_mode_index)
@@ -138,95 +123,135 @@ impl PlotControlPanel {
             && let (Some(scale), Some(bounds)) = (position_scale, data_bounds)
         {
             viewport.x_mode = AxisZoomMode::Manual;
-            response.changed |= viewport.set_x_start_manual(
-                scale.value_at(edited.x_position),
-                bounds.x_min,
-                bounds.x_max,
-                props.min_margin_x,
-            );
+            if edited.x_position >= X_POSITION_FOLLOW {
+                viewport.follow = FollowMode::PinnedToLatest;
+                viewport.pin_x_to_latest(bounds.x_min, bounds.x_max, props.min_margin_x);
+                response.changed = true;
+            } else {
+                response.changed |= viewport.set_x_start_manual(
+                    scale.value_at(edited.x_position),
+                    bounds.x_min,
+                    bounds.x_max,
+                    props.min_margin_x,
+                );
+            }
         }
 
         response
     }
 }
 
-/// Controlled values bound to the panel's form components. The panel diffs these against
-/// their initial snapshot after rendering to detect user edits.
+/// Controlled values bound to the panel's inputs. The panel diffs these against their initial
+/// snapshot after rendering to detect user edits.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ControlValues {
-    follow_newest: bool,
-    x_mode_index: usize,
     y_mode_index: usize,
     /// Normalized (`0.0..=1.0`) position on the X window slider.
     x_window: f32,
-    /// Normalized (`0.0..=1.0`) position on the X position slider.
+    /// Normalized (`0.0..=1.0`) position on the X position slider. `X_POSITION_FOLLOW`
+    /// (fully right) means the viewport follows the newest sample.
     x_position: f32,
 }
+
+/// Normalized X position slider value that pins the viewport to the latest sample.
+const X_POSITION_FOLLOW: f32 = 1.0;
 
 /// Read-only presentation state for the panel.
 #[derive(Clone, Copy, Debug)]
 struct PanelView {
-    x_mode_placeholder: &'static str,
+    is_visible: bool,
     y_mode_placeholder: &'static str,
+    y_mode_dropdown_id: egui::Id,
     x_window_enabled: bool,
     x_position_enabled: bool,
 }
 
-fn build_panel<'a>(root: &mut UiRoot<'a>, values: &'a mut ControlValues, view: PanelView) {
-    let ControlValues {
-        follow_newest,
-        x_mode_index,
-        y_mode_index,
-        x_window,
-        x_position,
-    } = values;
-
-    let spacing = bootstrap_tokens::spacing();
-    let row = Row::new().gutter_x(spacing.md).gutter_y(spacing.sm);
-
-    root.container(Container::fluid(), move |root| {
-        root.row(row, move |root| {
-            root.col(Col::new().xs(12).md(4), move |root| {
-                root.form_label(FormLabel::new("Live"));
-                root.form_check(
-                    follow_newest,
-                    FormCheck::checkbox("Follow newest (L)").hover_text(FOLLOW_HINT),
-                );
-            });
-
-            root.col(Col::new().xs(6).md(4), move |root| {
-                root.form_label(FormLabel::new("X mode"));
-                root.form_select(
-                    x_mode_index,
-                    mode_select(X_MODE_OPTIONS, view.x_mode_placeholder),
-                );
-            });
-
-            root.col(Col::new().xs(6).md(4), move |root| {
-                root.form_label(FormLabel::new("Y mode"));
-                root.form_select(
-                    y_mode_index,
-                    mode_select(Y_MODE_OPTIONS, view.y_mode_placeholder),
-                );
-            });
-
-            root.col(Col::new().xs(12).md(6), move |root| {
-                root.form_label(FormLabel::new("X window").hover_text(X_WINDOW_HINT));
-                root.form_range(x_window, normalized_range(view.x_window_enabled));
-            });
-
-            root.col(Col::new().xs(12).md(6), move |root| {
-                root.form_label(FormLabel::new("X position").hover_text(X_POSITION_HINT));
-                root.form_range(x_position, normalized_range(view.x_position_enabled));
-            });
-        });
-    });
+/// Button clicks from one pass of the panel.
+#[derive(Clone, Copy, Debug, Default)]
+struct PanelClicks {
+    visibility_toggled: bool,
+    download: bool,
 }
 
-fn mode_select(options: &[(AxisZoomMode, &str)], placeholder: &str) -> FormSelect {
-    options.iter().fold(
-        FormSelect::new().placeholder(placeholder),
-        |select, (_, text)| select.option(*text),
+/// Draws the panel, writing input edits into `values` and returning button clicks.
+fn build_panel(root: &mut UiRoot<'_>, values: &mut ControlValues, view: PanelView) -> PanelClicks {
+    let spacing = bootstrap_tokens::spacing();
+    let row = Row::new().gutter_x(spacing.md).gutter_y(spacing.sm);
+    let mut clicks = PanelClicks::default();
+
+    root.container(Container::fluid(), |root| {
+        root.row(row, |root| {
+            root.col(Col::new().xs(12).md(12), |root| {
+                root.hstack(HStack::new().gap(spacing.md), |root| {
+                    let button_icon = if view.is_visible {
+                        prelude::SvgIcon::EyeSlash
+                    } else {
+                        prelude::SvgIcon::List
+                    };
+                    clicks.visibility_toggled = root
+                        .button(
+                            Button::new("")
+                                .icon(button_icon)
+                                .variant(prelude::Variant::Primary),
+                        )
+                        .clicked();
+
+                    if view.is_visible {
+                        if let Some(index) = root
+                            .dropdown(
+                                DisclosureState::uncontrolled(view.y_mode_dropdown_id, false),
+                                mode_dropdown(
+                                    Y_MODE_OPTIONS,
+                                    values.y_mode_index,
+                                    view.y_mode_placeholder,
+                                ),
+                            )
+                            .clicked_index()
+                        {
+                            values.y_mode_index = index;
+                        }
+
+                        clicks.download = root
+                            .button(
+                                Button::new("")
+                                    .icon(prelude::SvgIcon::Download)
+                                    .variant(prelude::Variant::Secondary),
+                            )
+                            .clicked();
+                    }
+                });
+            });
+
+            if view.is_visible {
+                root.col(Col::new().xs(12).md(12), |root| {
+                    let position_variant = if values.x_position >= X_POSITION_FOLLOW {
+                        prelude::Variant::Info
+                    } else {
+                        prelude::Variant::Secondary
+                    };
+                    root.form_range(
+                        &mut values.x_window,
+                        normalized_range(view.x_window_enabled).variant(prelude::Variant::Primary),
+                    );
+                    root.form_range(
+                        &mut values.x_position,
+                        normalized_range(view.x_position_enabled).variant(position_variant),
+                    );
+                });
+            }
+        });
+    });
+
+    clicks
+}
+
+fn mode_dropdown(options: &[(AxisZoomMode, &str)], selected: usize, placeholder: &str) -> Dropdown {
+    let label = options.get(selected).map_or(placeholder, |(_, text)| *text);
+    options.iter().enumerate().fold(
+        Dropdown::new(label).variant(prelude::Variant::Secondary),
+        |dropdown, (index, (_, text))| {
+            dropdown.item(DropdownItem::new(*text).active(index == selected))
+        },
     )
 }
 
@@ -251,26 +276,6 @@ fn mode_label(mode: AxisZoomMode) -> &'static str {
         AxisZoomMode::FitAll => "Fit all",
         AxisZoomMode::FitVisible => "Fit visible",
         AxisZoomMode::Manual => "Manual",
-    }
-}
-
-fn apply_x_mode(
-    viewport: &mut ViewportState,
-    x_mode: AxisZoomMode,
-    bounds: DataBounds,
-    min_margin_x: f64,
-) {
-    match x_mode {
-        AxisZoomMode::FitAll | AxisZoomMode::FitVisible => {
-            viewport.fit_x_to_data_bounds(bounds, min_margin_x);
-        }
-        AxisZoomMode::Manual => {
-            if viewport.follow == FollowMode::PinnedToLatest {
-                viewport.pin_x_to_latest(bounds.x_min, bounds.x_max, min_margin_x);
-            } else {
-                viewport.clamp_x_to_data_bounds(bounds, min_margin_x);
-            }
-        }
     }
 }
 
@@ -299,7 +304,9 @@ fn x_position_scale(
         viewport.x_window_size,
         min_margin_x,
     )?;
-    let max_start = (limits.max_x - viewport.x_window_size).max(limits.min_x);
+    // The right end of the slider is the pinned-to-latest window (right edge at the newest
+    // sample, matching `ViewportState::pin_x_to_latest`), so "fully right" means follow.
+    let max_start = (bounds.x_max - viewport.x_window_size).max(limits.min_x);
 
     SliderScale::new(limits.min_x, max_start, false)
 }
@@ -410,11 +417,24 @@ mod tests {
     }
 
     #[test]
-    fn mode_index_uses_sentinel_for_unlisted_modes() {
-        assert_eq!(mode_index(X_MODE_OPTIONS, AxisZoomMode::Manual), 1);
-        assert_eq!(
-            mode_index(X_MODE_OPTIONS, AxisZoomMode::FitVisible),
-            usize::MAX
-        );
+    fn position_scale_right_end_matches_pinned_window() {
+        let bounds = DataBounds {
+            x_min: 0.0,
+            x_max: 100.0,
+            y_min: 0.0,
+            y_max: 1.0,
+        };
+        let mut viewport = ViewportState {
+            x_mode: AxisZoomMode::Manual,
+            follow: FollowMode::PinnedToLatest,
+            x_window_size: 20.0,
+            ..ViewportState::default()
+        };
+        viewport.pin_x_to_latest(bounds.x_min, bounds.x_max, DEFAULT_MIN_MARGIN_X);
+
+        let scale =
+            x_position_scale(bounds, &viewport, DEFAULT_MIN_MARGIN_X).expect("non-empty domain");
+        assert_eq!(scale.normalize(viewport.x_min), X_POSITION_FOLLOW);
+        assert!((scale.value_at(X_POSITION_FOLLOW) - viewport.x_min).abs() < 1e-9);
     }
 }

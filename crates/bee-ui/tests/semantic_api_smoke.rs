@@ -1,11 +1,16 @@
 use bee_ui::plot::{clamp_x_window_to_limits, compute_data_bounds, compute_x_navigation_limits};
 use bee_ui::prelude::*;
 
+/// `show_root` must run inside an egui pass, so each smoke test builds one frame.
+fn show_frame(ctx: &egui::Context, mut f: impl FnMut(&mut UiRoot<'_>)) {
+    let _ = ctx.run(egui::RawInput::default(), |ctx| show_root(ctx, &mut f));
+}
+
 #[test]
 fn semantic_api_supports_nested_bootstrap_like_composition() {
     let ctx = egui::Context::default();
 
-    show_root(&ctx, |ui| {
+    show_frame(&ctx, |ui| {
         ui.container(Container::fluid(), |ui| {
             ui.row(Row::new().gutter_x(16.0).gutter_y(12.0), |ui| {
                 ui.col(Col::new().md(8).sm(12), |ui| {
@@ -45,7 +50,7 @@ fn semantic_api_supports_nested_bootstrap_like_composition() {
 fn semantic_api_supports_raw_egui_escape_hatches() {
     let ctx = egui::Context::default();
 
-    show_root(&ctx, |ui| {
+    show_frame(&ctx, |ui| {
         ui.with_theme_variant(egui::Theme::Dark, |ui| {
             ui.with_style_override(
                 |style| {
@@ -67,7 +72,7 @@ fn semantic_api_supports_raw_egui_escape_hatches() {
 fn semantic_api_supports_card_plot_wrappers() {
     let ctx = egui::Context::default();
 
-    show_root(&ctx, |ui| {
+    show_frame(&ctx, |ui| {
         ui.card(Card::new().title("Latency"), |ui| {
             ui.plot(
                 PlotArea::new("latency_plot")
@@ -122,7 +127,7 @@ fn semantic_api_supports_phase_three_generator_and_decimation_helpers() {
 fn semantic_api_supports_mvp_dashboard_composition_smoke() {
     let ctx = egui::Context::default();
 
-    show_root(&ctx, |ui| {
+    show_frame(&ctx, |ui| {
         ui.container(Container::fluid(), |ui| {
             ui.row(Row::new().gutter(Spacing::new(12.0, 12.0)), |ui| {
                 ui.col(Col::new().xs(12).lg(8), |ui| {
@@ -157,10 +162,27 @@ fn semantic_api_supports_mvp_dashboard_composition_smoke() {
 fn semantic_row_smoke_allows_non_col_children_via_implicit_columns() {
     let ctx = egui::Context::default();
 
-    show_root(&ctx, |ui| {
+    show_frame(&ctx, |ui| {
         ui.row(Row::new().gutter_x(8.0), |ui| {
             ui.badge(Badge::warning("No explicit col"));
             ui.label(Label::new("Still composes"));
+        });
+    });
+}
+
+#[test]
+fn semantic_hstack_smoke_composes_inline_controls() {
+    let ctx = egui::Context::default();
+
+    show_frame(&ctx, |ui| {
+        ui.row(Row::new().gutter_x(8.0), |ui| {
+            ui.hstack(HStack::new().gap(4.0), |ui| {
+                ui.button(Button::new("Apply").variant(Variant::Primary));
+                ui.badge(Badge::info("Inline"));
+            });
+            ui.hstack(HStack::new().wrap(true), |ui| {
+                ui.label(Label::new("Wrapped"));
+            });
         });
     });
 }
@@ -171,7 +193,7 @@ fn semantic_api_supports_phase_zero_state_scopes() {
     let mut modal_open = true;
     let mut active_index = 0_usize;
 
-    show_root(&ctx, |ui| {
+    show_frame(&ctx, |ui| {
         ui.with_disclosure_state(&mut modal_open, |ui| {
             ui.card(Card::new().title("Disclosure content"), |ui| {
                 ui.label(Label::new("Only rendered while open"));
@@ -204,7 +226,7 @@ fn semantic_api_supports_phase_one_component_family() {
 
     let ctx = egui::Context::default();
 
-    show_root(&ctx, |ui| {
+    show_frame(&ctx, |ui| {
         ui.alert(Alert::warning("Bootstrap-style semantic alert"));
         ui.progress(
             Progress::new(65.0)
@@ -246,7 +268,7 @@ fn semantic_api_supports_phase_two_navigation_components() {
     let ctx = egui::Context::default();
     let mut dropdown_open = true;
 
-    show_root(&ctx, |ui| {
+    show_frame(&ctx, |ui| {
         ui.nav(
             Nav::new()
                 .item(NavItem::new("Overview").current())
@@ -291,7 +313,7 @@ fn semantic_api_supports_phase_three_forms_components() {
     let mut threshold = 0.5_f32;
     let mut email = String::new();
 
-    show_root(&ctx, |ui| {
+    show_frame(&ctx, |ui| {
         ui.form_label(FormLabel::new("Display name").is_required());
         ui.form_control(
             &mut display_name,
@@ -397,7 +419,7 @@ fn semantic_api_supports_phase_two_time_series_control_panel() {
         ..ViewportState::default()
     };
 
-    show_root(&ctx, |ui| {
+    show_frame(&ctx, |ui| {
         ui.time_series_plot(
             TimeSeriesPlotProps::new("phase_two_time_series_plot")
                 .title("Phase 2")
@@ -434,7 +456,7 @@ fn semantic_api_supports_phase_four_source_backed_time_series_plot() {
         ..ViewportState::default()
     };
 
-    show_root(&ctx, |ui| {
+    show_frame(&ctx, |ui| {
         ui.time_series_plot_from_source(
             TimeSeriesPlotProps::new("phase_four_time_series_plot")
                 .title("Phase 4")
@@ -485,7 +507,7 @@ fn semantic_api_supports_phase_five_plot_polish_and_shared_aliases() {
     };
     let _response = PlotControlPanelResponse::default();
 
-    show_root(&ctx, |ui| {
+    show_frame(&ctx, |ui| {
         ui.time_series_plot_from_source(
             TimeSeriesPlotProps::new("phase_five_time_series_plot")
                 .title("Phase 5")

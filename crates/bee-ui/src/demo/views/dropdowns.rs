@@ -4,7 +4,19 @@ use super::{super::state, shared};
 
 const UNCONTROLLED_OBSERVABILITY_ID: &str = "runnerd_bs.demo.dropdowns.uncontrolled_observability";
 
-pub(super) fn render_view_dropdowns<'a>(ui: &mut UiRoot<'a>, demo_state: &'a mut state::DemoState) {
+/// Items of the controlled "Service actions" dropdown, in menu order. `None` marks items that
+/// can't be selected.
+const SERVICE_ACTIONS: [Option<&str>; 4] = [
+    Some("Restart worker"),
+    Some("Reschedule pod"),
+    None,
+    Some("Scale deployment"),
+];
+
+/// Selectable items of the uncontrolled "Observability" dropdown, in menu order.
+const OBSERVABILITY_ACTIONS: [&str; 2] = ["Tail logs", "Inspect events"];
+
+pub(super) fn render_view_dropdowns(ui: &mut UiRoot<'_>, demo_state: &mut state::DemoState) {
     let primary_selection = state::dropdown_primary_selection(ui.context());
     let secondary_selection = state::dropdown_secondary_selection(ui.context());
 
@@ -82,28 +94,36 @@ pub(super) fn render_view_dropdowns<'a>(ui: &mut UiRoot<'a>, demo_state: &'a mut
                     .title("Composed example — controlled disclosure (`&mut bool`)")
                     .outline(),
                 |ui| {
-                    ui.dropdown(
-                        &mut demo_state.dropdowns_controlled_open,
-                        Dropdown::new("Service actions")
-                            .variant(Variant::Primary)
-                            .align_end(false)
-                            .item(
-                                DropdownItem::new("Restart worker")
-                                    .active(primary_selection == "Restart worker")
-                                    .on_click(state::dropdown_item_restart_clicked),
-                            )
-                            .item(
-                                DropdownItem::new("Reschedule pod")
-                                    .active(primary_selection == "Reschedule pod")
-                                    .on_click(state::dropdown_item_reschedule_clicked),
-                            )
-                            .item(DropdownItem::new("Delete cluster").disabled(true))
-                            .item(
-                                DropdownItem::new("Scale deployment")
-                                    .active(primary_selection == "Scale deployment")
-                                    .on_click(state::dropdown_item_scale_clicked),
-                            ),
-                    );
+                    let clicked = ui
+                        .dropdown(
+                            &mut demo_state.dropdowns_controlled_open,
+                            Dropdown::new("Service actions")
+                                .variant(Variant::Primary)
+                                .align_end(false)
+                                .item(
+                                    DropdownItem::new("Restart worker")
+                                        .active(primary_selection == "Restart worker"),
+                                )
+                                .item(
+                                    DropdownItem::new("Reschedule pod")
+                                        .active(primary_selection == "Reschedule pod"),
+                                )
+                                .item(DropdownItem::new("Delete cluster").disabled(true))
+                                .item(
+                                    DropdownItem::new("Scale deployment")
+                                        .active(primary_selection == "Scale deployment"),
+                                ),
+                        )
+                        .clicked_index();
+
+                    if let Some(item) =
+                        clicked.and_then(|index| SERVICE_ACTIONS.get(index).copied().flatten())
+                    {
+                        let ctx = ui.context();
+                        state::set_dropdown_primary_selection(ctx, item);
+                        state::set_last_action(ctx, format!("Dropdown: {item} selected"));
+                    }
+
                     ui.label(
                         Label::new("align_end(false) keeps menu start-aligned")
                             .small()
@@ -119,24 +139,36 @@ pub(super) fn render_view_dropdowns<'a>(ui: &mut UiRoot<'a>, demo_state: &'a mut
                     .title("Composed example — uncontrolled disclosure")
                     .outline(),
                 |ui| {
-                    ui.dropdown(
-                        DisclosureState::uncontrolled(UNCONTROLLED_OBSERVABILITY_ID, false),
-                        Dropdown::new("Observability")
-                            .variant(Variant::Info)
-                            .align_end(true)
-                            .item(
-                                DropdownItem::new("Tail logs")
-                                    .active(secondary_selection == "Tail logs")
-                                    .on_click(state::dropdown_uncontrolled_logs_clicked),
-                            )
-                            .item(
-                                DropdownItem::new("Inspect events")
-                                    .active(secondary_selection == "Inspect events")
-                                    .on_click(state::dropdown_uncontrolled_events_clicked),
-                            )
-                            .item(DropdownItem::new("Live traces").current())
-                            .item(DropdownItem::new("Debug shell").disabled(true)),
-                    );
+                    let clicked = ui
+                        .dropdown(
+                            DisclosureState::uncontrolled(UNCONTROLLED_OBSERVABILITY_ID, false),
+                            Dropdown::new("Observability")
+                                .variant(Variant::Info)
+                                .align_end(true)
+                                .item(
+                                    DropdownItem::new(OBSERVABILITY_ACTIONS[0])
+                                        .active(secondary_selection == OBSERVABILITY_ACTIONS[0]),
+                                )
+                                .item(
+                                    DropdownItem::new(OBSERVABILITY_ACTIONS[1])
+                                        .active(secondary_selection == OBSERVABILITY_ACTIONS[1]),
+                                )
+                                .item(DropdownItem::new("Live traces").current())
+                                .item(DropdownItem::new("Debug shell").disabled(true)),
+                        )
+                        .clicked_index();
+
+                    if let Some(&item) = clicked.and_then(|index| OBSERVABILITY_ACTIONS.get(index))
+                    {
+                        let ctx = ui.context();
+                        state::set_dropdown_primary_selection(ctx, item);
+                        state::set_dropdown_secondary_selection(ctx, item);
+                        state::set_last_action(
+                            ctx,
+                            format!("Dropdown (uncontrolled): {item} selected"),
+                        );
+                    }
+
                     ui.label(
                         Label::new("align_end(true) pins the menu to the right edge")
                             .small()

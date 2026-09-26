@@ -5,13 +5,15 @@ use crate::{
         ActiveIndexState, AlertProps, BadgeProps, Button, ButtonGroupProps, CardProps,
         CloseButtonProps, ColProps, ColValidationIssue, ContainerProps, ContainerScroll,
         DisclosureState, DropdownProps, FloatingLabelProps, FormCheckProps, FormControlProps,
-        FormLabelProps, FormRangeProps, FormSelectProps, FormTextProps, LabelProps, ListGroupProps,
-        NavProps, NavbarProps, PaginationProps, PlaceholderProps, ProgressProps, RowProps,
-        SpinnerProps, TableProps, TextProps, ValidationFeedbackProps,
+        FormLabelProps, FormRangeProps, FormSelectProps, FormTextProps, HStack, LabelProps,
+        ListGroupProps, NavProps, NavbarProps, PaginationProps, PlaceholderProps, ProgressProps,
+        RowProps, SpinnerProps, TableProps, TextProps, ValidationFeedbackProps,
     },
-    layout::{
-        ComputedCol, ComputedLine, GridColSpec, Span, compute_grid_lines, resolve_active_breakpoint,
+    core::{
+        response::{ChangeResponse, ItemClickResponse, NavbarResponse},
+        row_layout::RowCursor,
     },
+    layout::{ComputedCol, Span, resolve_active_breakpoint},
     plot::{
         ChartCard, PlotArea, PlotDataSource, TimeSeriesDataset, TimeSeriesPlot,
         TimeSeriesPlotProps, ViewportState,
@@ -19,10 +21,8 @@ use crate::{
     render::{Backend, EguiBackend},
 };
 
-type PlotBody<'a> = Box<dyn for<'plot_ui> FnOnce(&mut egui_plot::PlotUi<'plot_ui>) + 'a>;
-type RawEguiBody<'a> = Box<dyn FnOnce(&mut egui::Ui) + 'a>;
-type StyleOverride<'a> = Box<dyn FnOnce(&mut egui::Style) + 'a>;
-type StrictErrorReporter<'a> = Box<dyn FnMut(&UiValidationError) + 'a>;
+type StrictErrorReporter = Box<dyn FnMut(&UiValidationError)>;
+type ClickHandler = fn(&egui::Context);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UiValidationError {
@@ -90,503 +90,19 @@ impl fmt::Display for UiValidationError {
 
 impl std::error::Error for UiValidationError {}
 
-pub struct UiRoot<'a> {
-    ctx: egui::Context,
+/// State shared by every `UiRoot` created during one `show_root` / `show_in_ui` call.
+///
+/// It has no lifetime parameter so child `UiRoot`s can reborrow it freely.
+#[derive(Default)]
+pub(crate) struct RootState {
     backend: EguiBackend,
-    scopes: Vec<BuildScope<'a>>,
     strict_mode: bool,
     strict_mode_errors: Vec<UiValidationError>,
-    strict_mode_error_reporter: Option<StrictErrorReporter<'a>>,
+    strict_mode_error_reporter: Option<StrictErrorReporter>,
     table_render_seq: u64,
 }
 
-impl<'a> UiRoot<'a> {
-    pub fn new(ctx: &egui::Context) -> Self {
-        Self {
-            ctx: ctx.clone(),
-            backend: EguiBackend::default(),
-            scopes: vec![BuildScope::Root(Vec::new())],
-            strict_mode: false,
-            strict_mode_errors: Vec::new(),
-            strict_mode_error_reporter: None,
-            table_render_seq: 0,
-        }
-    }
-
-    pub fn context(&self) -> &egui::Context {
-        &self.ctx
-    }
-
-    pub fn set_strict_mode(&mut self, enabled: bool) -> &mut Self {
-        self.strict_mode = enabled;
-        self
-    }
-
-    pub const fn strict_mode_enabled(&self) -> bool {
-        self.strict_mode
-    }
-
-    pub fn set_strict_mode_error_reporter(
-        &mut self,
-        reporter: impl FnMut(&UiValidationError) + 'a,
-    ) -> &mut Self {
-        self.strict_mode_error_reporter = Some(Box::new(reporter));
-        self
-    }
-
-    pub fn clear_strict_mode_error_reporter(&mut self) -> &mut Self {
-        self.strict_mode_error_reporter = None;
-        self
-    }
-
-    pub fn strict_mode_errors(&self) -> &[UiValidationError] {
-        &self.strict_mode_errors
-    }
-
-    pub fn take_strict_mode_errors(&mut self) -> Vec<UiValidationError> {
-        std::mem::take(&mut self.strict_mode_errors)
-    }
-
-    /// Adds a stateful disclosure scope (open/closed) to the semantic tree.
-    ///
-    /// Controlled state (`&mut bool`) is preferred so callers keep visibility explicit.
-    pub fn with_disclosure_state(
-        &mut self,
-        state: impl Into<DisclosureState<'a>>,
-        f: impl FnOnce(&mut UiRoot<'a>),
-    ) {
-        self.scopes.push(BuildScope::Disclosure {
-            state: state.into(),
-            children: Vec::new(),
-        });
-        f(self);
-
-        let Some(BuildScope::Disclosure { state, children }) = self.scopes.pop() else {
-            debug_assert!(false, "disclosure scope stack was unexpectedly empty");
-            return;
-        };
-
-        self.append_node(SemanticNode::Disclosure(DisclosureScopeNode {
-            state,
-            children,
-        }));
-    }
-
-    /// Adds a stateful active-index scope to the semantic tree.
-    ///
-    /// Controlled state (`&mut usize`) is preferred so callers keep selection explicit.
-    pub fn with_active_index_state(
-        &mut self,
-        state: impl Into<ActiveIndexState<'a>>,
-        f: impl FnOnce(&mut UiRoot<'a>),
-    ) {
-        self.scopes.push(BuildScope::ActiveIndex {
-            state: state.into(),
-            children: Vec::new(),
-        });
-        f(self);
-
-        let Some(BuildScope::ActiveIndex { state, children }) = self.scopes.pop() else {
-            debug_assert!(false, "active-index scope stack was unexpectedly empty");
-            return;
-        };
-
-        self.append_node(SemanticNode::ActiveIndex(ActiveIndexScopeNode {
-            state,
-            children,
-        }));
-    }
-
-    pub(crate) fn interop_raw(&mut self, f: impl FnOnce(&mut egui::Ui) + 'a) {
-        self.append_node(SemanticNode::RawEgui(RawEguiNode {
-            body: Some(Box::new(f)),
-        }));
-    }
-
-    pub(crate) fn interop_with_style_override(
-        &mut self,
-        style_override: impl FnOnce(&mut egui::Style) + 'a,
-        f: impl FnOnce(&mut UiRoot<'a>),
-    ) {
-        self.scopes.push(BuildScope::StyleOverride {
-            style_override: Some(Box::new(style_override)),
-            children: Vec::new(),
-        });
-        f(self);
-
-        let Some(BuildScope::StyleOverride {
-            style_override,
-            children,
-        }) = self.scopes.pop()
-        else {
-            debug_assert!(false, "style-override scope stack was unexpectedly empty");
-            return;
-        };
-
-        self.append_node(SemanticNode::StyleOverride(StyleOverrideNode {
-            style_override,
-            children,
-        }));
-    }
-
-    pub(crate) fn interop_with_theme_variant(
-        &mut self,
-        theme: egui::Theme,
-        f: impl FnOnce(&mut UiRoot<'a>),
-    ) {
-        self.scopes.push(BuildScope::ThemeVariant {
-            theme,
-            children: Vec::new(),
-        });
-        f(self);
-
-        let Some(BuildScope::ThemeVariant { theme, children }) = self.scopes.pop() else {
-            debug_assert!(false, "theme-variant scope stack was unexpectedly empty");
-            return;
-        };
-
-        self.append_node(SemanticNode::ThemeVariant(ThemeVariantNode {
-            theme,
-            children,
-        }));
-    }
-
-    pub(crate) fn render_with_central_panel(&mut self) {
-        self.render_with_central_panel_frame(egui::Frame::central_panel(&self.ctx.style()));
-    }
-
-    pub(crate) fn render_in_ui(&mut self, ui: &mut egui::Ui) {
-        let mut nodes = self.take_root_nodes();
-        self.table_render_seq = 0;
-        self.render_nodes(ui, &mut nodes);
-    }
-
-    pub(crate) fn render_with_central_panel_frame(&mut self, frame: egui::Frame) {
-        let mut nodes = self.take_root_nodes();
-        self.table_render_seq = 0;
-
-        // `CentralPanel` requires an active egui pass. Compile-focused tests may call
-        // `show_root` with a fresh `egui::Context` that has not entered `Context::run` yet.
-        if self.ctx.cumulative_frame_nr() == 0 {
-            return;
-        }
-
-        let ctx = self.ctx.clone();
-        egui::CentralPanel::default().frame(frame).show(&ctx, |ui| {
-            self.render_nodes(ui, &mut nodes);
-        });
-    }
-
-    pub fn container(
-        &mut self,
-        container: impl Into<ContainerProps>,
-        f: impl FnOnce(&mut UiRoot<'a>),
-    ) {
-        let props = container.into();
-        self.scopes.push(BuildScope::Container {
-            props,
-            children: Vec::new(),
-        });
-        f(self);
-
-        let Some(BuildScope::Container { props, children }) = self.scopes.pop() else {
-            debug_assert!(false, "container scope stack was unexpectedly empty");
-            return;
-        };
-
-        self.append_node(SemanticNode::Container(ContainerNode { props, children }));
-    }
-
-    pub fn row(&mut self, row: impl Into<RowProps>, f: impl FnOnce(&mut UiRoot<'a>)) {
-        let props = row.into();
-        self.scopes.push(BuildScope::Row {
-            props,
-            cols: Vec::new(),
-        });
-        f(self);
-
-        let Some(BuildScope::Row { props, cols }) = self.scopes.pop() else {
-            debug_assert!(false, "row scope stack was unexpectedly empty");
-            return;
-        };
-
-        self.append_node(SemanticNode::Row(RowNode { props, cols }));
-    }
-
-    pub fn col(&mut self, col: impl Into<ColProps>, f: impl FnOnce(&mut UiRoot<'a>)) {
-        let props = col.into();
-        self.report_col_validation_issues(&props);
-
-        self.scopes.push(BuildScope::Col {
-            props,
-            children: Vec::new(),
-            implicit: false,
-        });
-        f(self);
-
-        let Some(BuildScope::Col {
-            props,
-            children,
-            implicit,
-        }) = self.scopes.pop()
-        else {
-            debug_assert!(false, "col scope stack was unexpectedly empty");
-            return;
-        };
-
-        self.append_node(SemanticNode::Col(ColNode {
-            props,
-            children,
-            implicit,
-        }));
-    }
-
-    pub fn card(&mut self, card: impl Into<CardProps>, f: impl FnOnce(&mut UiRoot<'a>)) {
-        let props = card.into();
-        self.scopes.push(BuildScope::Card {
-            props,
-            children: Vec::new(),
-        });
-        f(self);
-
-        let Some(BuildScope::Card { props, children }) = self.scopes.pop() else {
-            debug_assert!(false, "card scope stack was unexpectedly empty");
-            return;
-        };
-
-        self.append_node(SemanticNode::Card(CardNode { props, children }));
-    }
-
-    pub fn chart_card<F>(&mut self, chart: impl Into<ChartCard>, f: F)
-    where
-        F: for<'plot_ui> FnOnce(&mut egui_plot::PlotUi<'plot_ui>) + 'a,
-    {
-        let chart = chart.into();
-        self.card(chart.card, move |ui| {
-            ui.plot(chart.plot, f);
-        });
-    }
-
-    pub fn plot<F>(&mut self, plot: impl Into<PlotArea>, f: F)
-    where
-        F: for<'plot_ui> FnOnce(&mut egui_plot::PlotUi<'plot_ui>) + 'a,
-    {
-        let props = plot.into();
-        self.append_node(SemanticNode::Plot(PlotNode {
-            props,
-            body: Some(Box::new(f)),
-        }));
-    }
-
-    pub fn time_series_plot(
-        &mut self,
-        plot: impl Into<TimeSeriesPlotProps>,
-        dataset: &'a TimeSeriesDataset,
-        viewport: &'a mut ViewportState,
-    ) {
-        let props = plot.into();
-        self.interop_raw(move |egui_ui| {
-            TimeSeriesPlot::show(egui_ui, &props, dataset, viewport);
-        });
-    }
-
-    pub fn time_series_plot_from_source<S>(
-        &mut self,
-        plot: impl Into<TimeSeriesPlotProps>,
-        source: &'a S,
-        viewport: &'a mut ViewportState,
-    ) where
-        S: PlotDataSource + ?Sized + 'a,
-    {
-        let props = plot.into();
-        self.interop_raw(move |egui_ui| {
-            let dataset = source.snapshot();
-            TimeSeriesPlot::show(egui_ui, &props, &dataset, viewport);
-        });
-    }
-
-    pub fn badge(&mut self, badge: impl Into<BadgeProps>) {
-        let props = badge.into();
-        self.append_node(SemanticNode::Badge(props));
-    }
-
-    pub fn label(&mut self, label: impl Into<LabelProps>) {
-        let props = label.into();
-        self.append_node(SemanticNode::Label(props));
-    }
-
-    pub fn text(&mut self, text: impl Into<TextProps>) {
-        let props = text.into();
-        self.append_node(SemanticNode::Text(props));
-    }
-
-    pub fn button(&mut self, button: Button) {
-        self.append_node(SemanticNode::Button(button));
-    }
-
-    pub fn alert(&mut self, alert: impl Into<AlertProps>) {
-        let props = alert.into();
-        self.append_node(SemanticNode::Alert(props));
-    }
-
-    pub fn progress(&mut self, progress: impl Into<ProgressProps>) {
-        let props = progress.into();
-        self.append_node(SemanticNode::Progress(props));
-    }
-
-    pub fn table(&mut self, table: impl Into<TableProps>) {
-        let props = table.into();
-        self.append_node(SemanticNode::Table(props));
-    }
-
-    pub fn close_button(&mut self, close_button: impl Into<CloseButtonProps>) {
-        let props = close_button.into();
-        self.append_node(SemanticNode::CloseButton(props));
-    }
-
-    pub fn pagination(&mut self, pagination: impl Into<PaginationProps>) {
-        let props = pagination.into();
-        self.append_node(SemanticNode::Pagination(props));
-    }
-
-    pub fn spinner(&mut self, spinner: impl Into<SpinnerProps>) {
-        let props = spinner.into();
-        self.append_node(SemanticNode::Spinner(props));
-    }
-
-    pub fn placeholder(&mut self, placeholder: impl Into<PlaceholderProps>) {
-        let props = placeholder.into();
-        self.append_node(SemanticNode::Placeholder(props));
-    }
-
-    pub fn button_group(&mut self, button_group: impl Into<ButtonGroupProps>) {
-        let props = button_group.into();
-        self.append_node(SemanticNode::ButtonGroup(props));
-    }
-
-    pub fn list_group(&mut self, list_group: impl Into<ListGroupProps>) {
-        let props = list_group.into();
-        self.append_node(SemanticNode::ListGroup(props));
-    }
-
-    pub fn nav(&mut self, nav: impl Into<NavProps>) {
-        let props = nav.into();
-        self.append_node(SemanticNode::Nav(props));
-    }
-
-    pub fn navbar(&mut self, navbar: impl Into<NavbarProps>) {
-        let props = navbar.into();
-        self.append_node(SemanticNode::Navbar(props));
-    }
-
-    pub fn dropdown(
-        &mut self,
-        state: impl Into<DisclosureState<'a>>,
-        dropdown: impl Into<DropdownProps>,
-    ) {
-        self.append_node(SemanticNode::Dropdown(DropdownNode {
-            props: dropdown.into(),
-            state: state.into(),
-        }));
-    }
-
-    pub fn form_label(&mut self, form_label: impl Into<FormLabelProps>) {
-        let props = form_label.into();
-        self.append_node(SemanticNode::FormLabel(props));
-    }
-
-    pub fn form_text(&mut self, form_text: impl Into<FormTextProps>) {
-        let props = form_text.into();
-        self.append_node(SemanticNode::FormText(props));
-    }
-
-    pub fn form_control(
-        &mut self,
-        value: &'a mut String,
-        form_control: impl Into<FormControlProps>,
-    ) {
-        self.append_node(SemanticNode::FormControl(FormControlNode {
-            value,
-            props: form_control.into(),
-        }));
-    }
-
-    pub fn form_select(
-        &mut self,
-        selected_index: &'a mut usize,
-        form_select: impl Into<FormSelectProps>,
-    ) {
-        self.append_node(SemanticNode::FormSelect(FormSelectNode {
-            selected_index,
-            props: form_select.into(),
-        }));
-    }
-
-    pub fn form_check(&mut self, checked: &'a mut bool, form_check: impl Into<FormCheckProps>) {
-        self.append_node(SemanticNode::FormCheck(FormCheckNode {
-            checked,
-            props: form_check.into(),
-        }));
-    }
-
-    pub fn form_range(&mut self, value: &'a mut f32, form_range: impl Into<FormRangeProps>) {
-        self.append_node(SemanticNode::FormRange(FormRangeNode {
-            value,
-            props: form_range.into(),
-        }));
-    }
-
-    pub fn floating_label(
-        &mut self,
-        value: &'a mut String,
-        floating_label: impl Into<FloatingLabelProps>,
-    ) {
-        self.append_node(SemanticNode::FloatingLabel(FloatingLabelNode {
-            value,
-            props: floating_label.into(),
-        }));
-    }
-
-    pub fn validation_feedback(&mut self, validation_feedback: impl Into<ValidationFeedbackProps>) {
-        let props = validation_feedback.into();
-        self.append_node(SemanticNode::ValidationFeedback(props));
-    }
-
-    fn append_node(&mut self, node: SemanticNode<'a>) {
-        let Some(scope) = self.scopes.last_mut() else {
-            debug_assert!(false, "ui scope stack was unexpectedly empty");
-            return;
-        };
-
-        match scope {
-            BuildScope::Root(children)
-            | BuildScope::Container { children, .. }
-            | BuildScope::Col { children, .. }
-            | BuildScope::Card { children, .. }
-            | BuildScope::Disclosure { children, .. }
-            | BuildScope::ActiveIndex { children, .. }
-            | BuildScope::StyleOverride { children, .. }
-            | BuildScope::ThemeVariant { children, .. } => children.push(node),
-            BuildScope::Row { cols, .. } => match node {
-                SemanticNode::Col(col) => cols.push(col),
-                node => {
-                    if let Some(last_col) = cols.last_mut()
-                        && last_col.implicit
-                    {
-                        last_col.children.push(node);
-                        return;
-                    }
-
-                    cols.push(ColNode {
-                        props: ColProps::default(),
-                        children: vec![node],
-                        implicit: true,
-                    });
-                }
-            },
-        }
-    }
-
+impl RootState {
     fn report_col_validation_issues(&mut self, props: &ColProps) {
         if !self.strict_mode {
             return;
@@ -609,466 +125,322 @@ impl<'a> UiRoot<'a> {
         self.strict_mode_errors.push(error);
     }
 
-    fn take_root_nodes(&mut self) -> Vec<SemanticNode<'a>> {
-        debug_assert_eq!(self.scopes.len(), 1, "unbalanced semantic scope stack");
-
-        let Some(BuildScope::Root(nodes)) = self.scopes.first_mut() else {
-            debug_assert!(false, "root scope was unexpectedly unavailable");
-            return Vec::new();
-        };
-
-        std::mem::take(nodes)
-    }
-
     fn next_table_render_seq(&mut self) -> u64 {
         let seq = self.table_render_seq;
         self.table_render_seq = self.table_render_seq.wrapping_add(1);
         seq
     }
+}
 
-    fn render_nodes(&mut self, ui: &mut egui::Ui, nodes: &mut [SemanticNode<'a>]) {
-        for node in nodes.iter_mut() {
-            self.backend.sync_mode_from_ui(ui);
-            match node {
-                SemanticNode::Container(container) => self.render_container(ui, container),
-                SemanticNode::Row(row) => self.render_row(ui, row),
-                SemanticNode::Col(col) => self.render_standalone_col(ui, col),
-                SemanticNode::Card(card) => self.render_card(ui, card),
-                SemanticNode::Plot(plot) => self.render_plot(ui, plot),
-                SemanticNode::Disclosure(scope) => self.render_disclosure_scope(ui, scope),
-                SemanticNode::ActiveIndex(scope) => self.render_active_index_scope(ui, scope),
-                SemanticNode::RawEgui(raw) => self.render_raw_egui(ui, raw),
-                SemanticNode::StyleOverride(scope) => self.render_style_override_scope(ui, scope),
-                SemanticNode::ThemeVariant(scope) => self.render_theme_variant_scope(ui, scope),
-                SemanticNode::Badge(badge) => self.backend.render_badge(ui, badge),
-                SemanticNode::Label(label) => self.backend.render_label(ui, label),
-                SemanticNode::Text(text) => self.backend.render_text(ui, text),
-                SemanticNode::Button(button) => {
-                    let response = self.backend.render_button(ui, button);
-                    if response.clicked()
-                        && let Some(on_click) = button.on_click
-                    {
-                        on_click(ui.ctx());
-                    }
-                }
-                SemanticNode::Alert(alert) => self.backend.render_alert(ui, alert),
-                SemanticNode::Progress(progress) => self.backend.render_progress(ui, progress),
-                SemanticNode::Table(table) => {
-                    let table_seq = self.next_table_render_seq();
-                    let clicked = ui
-                        .push_id(("semantic_table", table_seq), |table_ui| {
-                            self.backend.render_table(table_ui, table, table_seq)
-                        })
-                        .inner;
-                    for index in clicked {
-                        if let Some(on_click) = table.rows.get(index).and_then(|row| row.on_click) {
-                            on_click(ui.ctx());
-                        }
-                    }
-                }
-                SemanticNode::CloseButton(close_button) => {
-                    let response = self.backend.render_close_button(ui, close_button);
-                    if response.clicked()
-                        && let Some(on_click) = close_button.on_click
-                    {
-                        on_click(ui.ctx());
-                    }
-                }
-                SemanticNode::Pagination(pagination) => {
-                    let clicked = self.backend.render_pagination(ui, pagination);
-                    for index in clicked {
-                        if let Some(on_click) =
-                            pagination.items.get(index).and_then(|item| item.on_click)
-                        {
-                            on_click(ui.ctx());
-                        }
-                    }
-                }
-                SemanticNode::Spinner(spinner) => self.backend.render_spinner(ui, spinner),
-                SemanticNode::Placeholder(placeholder) => {
-                    self.backend.render_placeholder(ui, placeholder)
-                }
-                SemanticNode::ButtonGroup(button_group) => {
-                    let clicked = self.backend.render_button_group(ui, button_group);
-                    for index in clicked {
-                        if let Some(on_click) = button_group
-                            .buttons
-                            .get(index)
-                            .and_then(|button| button.on_click)
-                        {
-                            on_click(ui.ctx());
-                        }
-                    }
-                }
-                SemanticNode::ListGroup(list_group) => {
-                    let clicked = self.backend.render_list_group(ui, list_group);
-                    for index in clicked {
-                        if let Some(on_click) =
-                            list_group.items.get(index).and_then(|item| item.on_click)
-                        {
-                            on_click(ui.ctx());
-                        }
-                    }
-                }
-                SemanticNode::Nav(nav) => {
-                    let clicked = self.backend.render_nav(ui, nav);
-                    for index in clicked {
-                        if let Some(on_click) = nav.items.get(index).and_then(|item| item.on_click)
-                        {
-                            on_click(ui.ctx());
-                        }
-                    }
-                }
-                SemanticNode::Navbar(navbar) => {
-                    let result = self.backend.render_navbar(ui, navbar);
-                    if result.brand_clicked
-                        && let Some(on_brand_click) = navbar.on_brand_click
-                    {
-                        on_brand_click(ui.ctx());
-                    }
+/// Immediate-mode semantic builder wrapping an `egui::Ui`.
+///
+/// Every component method draws as soon as it is called. Scope methods (`container`, `col`,
+/// `card`, ...) run their closure inside the matching egui scope and return its value.
+pub struct UiRoot<'ui> {
+    ui: &'ui mut egui::Ui,
+    state: &'ui mut RootState,
+    /// Set while this `UiRoot` is the body of a `row`: every component then takes the next
+    /// column slot instead of drawing into `ui` directly.
+    row: Option<&'ui mut RowCursor>,
+}
 
-                    for index in result.clicked_items {
-                        if let Some(on_click) =
-                            navbar.items.get(index).and_then(|item| item.on_click)
-                        {
-                            on_click(ui.ctx());
-                        }
-                    }
-                }
-                SemanticNode::Dropdown(dropdown) => {
-                    let open = dropdown.state.current(ui.ctx());
-                    let result = self.backend.render_dropdown(ui, &dropdown.props, open);
+impl<'ui> UiRoot<'ui> {
+    pub(crate) fn new(ui: &'ui mut egui::Ui, state: &'ui mut RootState) -> Self {
+        Self {
+            ui,
+            state,
+            row: None,
+        }
+    }
 
-                    if result.toggle_clicked {
-                        dropdown.state.toggle(ui.ctx());
-                    }
+    pub fn context(&self) -> &egui::Context {
+        self.ui.ctx()
+    }
 
-                    if let Some(index) = result.clicked_item {
-                        dropdown.state.set_current(ui.ctx(), false);
-                        if let Some(on_click) = dropdown
-                            .props
-                            .items
-                            .get(index)
-                            .and_then(|item| item.on_click)
-                        {
-                            on_click(ui.ctx());
-                        }
-                    }
-                }
-                SemanticNode::FormLabel(form_label) => {
-                    self.backend.render_form_label(ui, form_label)
-                }
-                SemanticNode::FormText(form_text) => self.backend.render_form_text(ui, form_text),
-                SemanticNode::FormControl(form_control) => {
-                    let changed = self.backend.render_form_control(
-                        ui,
-                        form_control.value,
-                        &form_control.props,
-                    );
-                    if changed && let Some(on_change) = form_control.props.on_change {
-                        on_change(ui.ctx());
-                    }
-                }
-                SemanticNode::FormSelect(form_select) => {
-                    let changed = self.backend.render_form_select(
-                        ui,
-                        form_select.selected_index,
-                        &form_select.props,
-                    );
-                    if changed && let Some(on_change) = form_select.props.on_change {
-                        on_change(ui.ctx());
-                    }
-                }
-                SemanticNode::FormCheck(form_check) => {
-                    let changed =
-                        self.backend
-                            .render_form_check(ui, form_check.checked, &form_check.props);
-                    if changed && let Some(on_change) = form_check.props.on_change {
-                        on_change(ui.ctx());
-                    }
-                }
-                SemanticNode::FormRange(form_range) => {
-                    let changed =
-                        self.backend
-                            .render_form_range(ui, form_range.value, &form_range.props);
-                    if changed && let Some(on_change) = form_range.props.on_change {
-                        on_change(ui.ctx());
-                    }
-                }
-                SemanticNode::FloatingLabel(floating_label) => {
-                    let changed = self.backend.render_floating_label(
-                        ui,
-                        floating_label.value,
-                        &floating_label.props,
-                    );
-                    if changed && let Some(on_change) = floating_label.props.on_change {
-                        on_change(ui.ctx());
-                    }
-                }
-                SemanticNode::ValidationFeedback(validation_feedback) => self
-                    .backend
-                    .render_validation_feedback(ui, validation_feedback),
+    pub fn set_strict_mode(&mut self, enabled: bool) -> &mut Self {
+        self.state.strict_mode = enabled;
+        self
+    }
+
+    pub const fn strict_mode_enabled(&self) -> bool {
+        self.state.strict_mode
+    }
+
+    pub fn set_strict_mode_error_reporter(
+        &mut self,
+        reporter: impl FnMut(&UiValidationError) + 'static,
+    ) -> &mut Self {
+        self.state.strict_mode_error_reporter = Some(Box::new(reporter));
+        self
+    }
+
+    pub fn clear_strict_mode_error_reporter(&mut self) -> &mut Self {
+        self.state.strict_mode_error_reporter = None;
+        self
+    }
+
+    pub fn strict_mode_errors(&self) -> &[UiValidationError] {
+        &self.state.strict_mode_errors
+    }
+
+    pub fn take_strict_mode_errors(&mut self) -> Vec<UiValidationError> {
+        std::mem::take(&mut self.state.strict_mode_errors)
+    }
+
+    fn sync_theme_mode(&mut self) {
+        self.state.backend.sync_mode_from_ui(self.ui);
+    }
+
+    const fn in_row(&self) -> bool {
+        self.row.is_some()
+    }
+
+    /// Draws a component called directly inside a row into its own auto column.
+    fn loose_child<R>(&mut self, f: impl FnOnce(&mut UiRoot<'_>) -> R) -> R {
+        self.row_col(ColProps::default(), f)
+    }
+
+    /// Draws `f` into the next column slot of the enclosing row.
+    fn row_col<R>(&mut self, props: ColProps, f: impl FnOnce(&mut UiRoot<'_>) -> R) -> R {
+        let Some(cursor) = self.row.as_deref_mut() else {
+            debug_assert!(false, "`row_col` called outside a row");
+            return f(self);
+        };
+        let row_ui = &mut *self.ui;
+        let state = &mut *self.state;
+        let row_props = *cursor.props();
+
+        let (line_index, computed) = cursor.next_placement(&props);
+        if cursor.open_line_index() != Some(line_index) {
+            if let Some(line) = cursor.close_line() {
+                state.backend.end_row(row_ui, &row_props, &line);
             }
-        }
-    }
-
-    fn render_raw_egui(&mut self, ui: &mut egui::Ui, raw: &mut RawEguiNode<'a>) {
-        let Some(body) = raw.body.take() else {
-            return;
-        };
-
-        body(ui);
-    }
-
-    fn render_disclosure_scope(&mut self, ui: &mut egui::Ui, scope: &mut DisclosureScopeNode<'a>) {
-        let open = scope.state.current(ui.ctx());
-        self.backend.begin_disclosure_scope(ui, open);
-
-        if open {
-            self.render_nodes(ui, &mut scope.children);
+            let line = cursor.open_line(line_index, &computed);
+            state.backend.begin_row(row_ui, &row_props, line);
         }
 
-        self.backend.end_disclosure_scope(ui, open);
+        let slot = cursor.slot_rect(&computed);
+        state.backend.begin_col(row_ui, &props, &computed);
+
+        let mut builder = egui::UiBuilder::new()
+            .id_salt(("bee_ui_row_col", computed.source_index))
+            .max_rect(slot)
+            .layout(egui::Layout::top_down(egui::Align::Min));
+        if cursor.is_first_appearance() {
+            // This pass is discarded once the row has measured its columns, like `egui::Grid`'s
+            // first frame, so don't show the placeholder layout if the discard is denied.
+            builder = builder.invisible();
+        }
+        let mut col_ui = row_ui.new_child(builder);
+        let inner = f(&mut UiRoot::new(&mut col_ui, state));
+        cursor.record_col(slot, col_ui.min_rect());
+
+        state.backend.end_col(row_ui, &props, &computed);
+        inner
     }
 
-    fn render_active_index_scope(
+    /// Runs `f` only while the disclosure state is open, returning `None` when closed.
+    ///
+    /// Controlled state (`&mut bool`) is preferred so callers keep visibility explicit.
+    pub fn with_disclosure_state<'s, R>(
         &mut self,
-        ui: &mut egui::Ui,
-        scope: &mut ActiveIndexScopeNode<'a>,
-    ) {
-        let active_index = scope.state.current(ui.ctx());
-        self.backend.begin_active_index_scope(ui, active_index);
-        self.render_nodes(ui, &mut scope.children);
-        self.backend.end_active_index_scope(ui, active_index);
+        state: impl Into<DisclosureState<'s>>,
+        f: impl FnOnce(&mut UiRoot<'_>) -> R,
+    ) -> Option<R> {
+        let disclosure = state.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.with_disclosure_state(disclosure, f));
+        }
+        self.sync_theme_mode();
+
+        let open = disclosure.current(self.ui.ctx());
+        self.state.backend.begin_disclosure_scope(self.ui, open);
+        let inner = if open { Some(f(self)) } else { None };
+        self.state.backend.end_disclosure_scope(self.ui, open);
+        inner
     }
 
-    fn render_style_override_scope(
+    /// Runs `f` inside an active-index scope.
+    ///
+    /// Controlled state (`&mut usize`) is preferred so callers keep selection explicit.
+    pub fn with_active_index_state<'s, R>(
         &mut self,
-        ui: &mut egui::Ui,
-        scope: &mut StyleOverrideNode<'a>,
-    ) {
-        let Some(style_override) = scope.style_override.take() else {
-            self.render_nodes(ui, &mut scope.children);
-            return;
-        };
+        state: impl Into<ActiveIndexState<'s>>,
+        f: impl FnOnce(&mut UiRoot<'_>) -> R,
+    ) -> R {
+        let active_index_state = state.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.with_active_index_state(active_index_state, f));
+        }
+        self.sync_theme_mode();
 
-        let mut style = ui.style().as_ref().clone();
+        let active_index = active_index_state.current(self.ui.ctx());
+        self.state
+            .backend
+            .begin_active_index_scope(self.ui, active_index);
+        let inner = f(self);
+        self.state
+            .backend
+            .end_active_index_scope(self.ui, active_index);
+        inner
+    }
+
+    pub(crate) fn interop_raw<R>(&mut self, f: impl FnOnce(&mut egui::Ui) -> R) -> R {
+        if self.in_row() {
+            return self.loose_child(|ui| ui.interop_raw(f));
+        }
+        self.sync_theme_mode();
+        f(self.ui)
+    }
+
+    pub(crate) fn interop_with_style_override<R>(
+        &mut self,
+        style_override: impl FnOnce(&mut egui::Style),
+        f: impl FnOnce(&mut UiRoot<'_>) -> R,
+    ) -> R {
+        if self.in_row() {
+            return self.loose_child(|ui| ui.interop_with_style_override(style_override, f));
+        }
+        self.sync_theme_mode();
+
+        let mut style = self.ui.style().as_ref().clone();
         style_override(&mut style);
 
-        ui.scope(|scope_ui| {
-            *scope_ui.style_mut() = style;
-            self.render_nodes(scope_ui, &mut scope.children);
-        });
-    }
-
-    fn render_theme_variant_scope(&mut self, ui: &mut egui::Ui, scope: &mut ThemeVariantNode<'a>) {
-        let mut themed_style = ui.style().as_ref().clone();
-        themed_style.visuals = scope.theme.default_visuals();
-
-        ui.scope(|scope_ui| {
-            *scope_ui.style_mut() = themed_style;
-            self.render_nodes(scope_ui, &mut scope.children);
-        });
-    }
-
-    fn render_container(&mut self, ui: &mut egui::Ui, container: &mut ContainerNode<'a>) {
-        let props = container.props;
-        self.backend.begin_container(ui, &props);
-
-        match props.scroll {
-            ContainerScroll::None => {
-                self.render_container_body(ui, props, &mut container.children);
-            }
-            ContainerScroll::Horizontal => {
-                egui::ScrollArea::horizontal()
-                    .auto_shrink([false, false])
-                    .show(ui, |scroll_ui| {
-                        self.render_container_body(scroll_ui, props, &mut container.children);
-                    });
-            }
-            ContainerScroll::Vertical => {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |scroll_ui| {
-                        self.render_container_body(scroll_ui, props, &mut container.children);
-                    });
-            }
-            ContainerScroll::Both => {
-                egui::ScrollArea::both()
-                    .auto_shrink([false, false])
-                    .show(ui, |scroll_ui| {
-                        self.render_container_body(scroll_ui, props, &mut container.children);
-                    });
-            }
-        }
-
-        self.backend.end_container(ui, &props);
-    }
-
-    fn render_container_body(
-        &mut self,
-        ui: &mut egui::Ui,
-        props: ContainerProps,
-        children: &mut Vec<SemanticNode<'a>>,
-    ) {
-        let available_width = ui.available_width();
-        let container_width = self
-            .backend
-            .resolve_container_width(&props, available_width);
-
-        let horizontal_padding = props.padding.gutter_x();
-        let vertical_padding = props.padding.gutter_y();
-
-        ui.horizontal_top(|row_ui| {
-            if !props.fluid {
-                let leading_space = ((available_width - container_width) * 0.5).max(0.0);
-                if leading_space > 0.0 {
-                    row_ui.add_space(leading_space);
-                }
-            }
-
-            row_ui.allocate_ui_with_layout(
-                egui::vec2(container_width, 0.0),
-                egui::Layout::top_down(egui::Align::Min),
-                |container_ui| {
-                    if vertical_padding > 0.0 {
-                        container_ui.add_space(vertical_padding);
-                    }
-
-                    container_ui.horizontal_top(|padding_ui| {
-                        if horizontal_padding > 0.0 {
-                            padding_ui.add_space(horizontal_padding);
-                        }
-
-                        let content_width = (container_width - horizontal_padding * 2.0).max(0.0);
-                        padding_ui.allocate_ui_with_layout(
-                            egui::vec2(content_width, 0.0),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |content_ui| {
-                                self.render_nodes(content_ui, children);
-                            },
-                        );
-
-                        if horizontal_padding > 0.0 {
-                            padding_ui.add_space(horizontal_padding);
-                        }
-                    });
-
-                    if vertical_padding > 0.0 {
-                        container_ui.add_space(vertical_padding);
-                    }
-                },
-            );
-        });
-    }
-
-    fn render_row(&mut self, ui: &mut egui::Ui, row: &mut RowNode<'a>) {
-        if row.cols.is_empty() {
-            return;
-        }
-
-        let row_props = row.props;
-        let row_width = ui.available_width();
-        let active_breakpoint = resolve_active_breakpoint(row_width, self.backend.breakpoints());
-
-        let mut col_specs = Vec::with_capacity(row.cols.len());
-        for col in &row.cols {
-            col.props.debug_assert_valid();
-
-            let raw_span = col.props.resolve_span_unchecked(active_breakpoint);
-            let span = if raw_span.is_valid() {
-                raw_span
-            } else {
-                Span::Auto
-            };
-
-            let offset = if col.props.offset <= Span::MAX_COLUMNS {
-                col.props.offset
-            } else {
-                0
-            };
-
-            let order = col
-                .props
-                .order
-                .filter(|order| (ColProps::MIN_ORDER..=ColProps::MAX_ORDER).contains(order));
-
-            col_specs.push(GridColSpec {
-                span,
-                offset,
-                order,
-            });
-        }
-
-        let gutter_x = row_props.spacing().gutter_x();
-        let gutter_y = row_props.spacing().gutter_y();
-
-        let computed_lines = compute_grid_lines(&col_specs, row_width, gutter_x, false)
-            .or_else(|_| {
-                let fallback_specs: Vec<GridColSpec> =
-                    row.cols.iter().map(|_| GridColSpec::auto()).collect();
-                compute_grid_lines(&fallback_specs, row_width, gutter_x, false)
+        let state = &mut *self.state;
+        self.ui
+            .scope(|scope_ui| {
+                *scope_ui.style_mut() = style;
+                f(&mut UiRoot::new(scope_ui, state))
             })
-            .unwrap_or_default();
+            .inner
+    }
 
-        for (line_index, line) in computed_lines.iter().enumerate() {
-            if line_index > 0 && gutter_y > 0.0 {
-                ui.add_space(gutter_y);
-            }
-
-            self.render_row_line(ui, row, line, row_props);
+    pub(crate) fn interop_with_theme_variant<R>(
+        &mut self,
+        theme: egui::Theme,
+        f: impl FnOnce(&mut UiRoot<'_>) -> R,
+    ) -> R {
+        if self.in_row() {
+            return self.loose_child(|ui| ui.interop_with_theme_variant(theme, f));
         }
+        self.sync_theme_mode();
+
+        let mut themed_style = self.ui.style().as_ref().clone();
+        themed_style.visuals = theme.default_visuals();
+
+        let state = &mut *self.state;
+        self.ui
+            .scope(|scope_ui| {
+                *scope_ui.style_mut() = themed_style;
+                f(&mut UiRoot::new(scope_ui, state))
+            })
+            .inner
     }
 
-    fn render_row_line(
+    pub fn container<R>(
         &mut self,
-        ui: &mut egui::Ui,
-        row: &mut RowNode<'a>,
-        line: &ComputedLine,
-        row_props: RowProps,
-    ) {
-        ui.horizontal_top(|line_ui| {
-            self.backend.begin_row(line_ui, &row_props, line);
+        container: impl Into<ContainerProps>,
+        f: impl FnOnce(&mut UiRoot<'_>) -> R,
+    ) -> R {
+        let props = container.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.container(props, f));
+        }
+        self.sync_theme_mode();
 
-            let mut cursor_x = 0.0_f32;
-            for computed in &line.cols {
-                let leading = (computed.x - cursor_x).max(0.0);
-                if leading > 0.0 {
-                    line_ui.add_space(leading);
-                }
+        let ui = &mut *self.ui;
+        let state = &mut *self.state;
+        state.backend.begin_container(ui, &props);
 
-                if let Some(col) = row.cols.get_mut(computed.source_index) {
-                    self.render_computed_col(line_ui, col, computed);
-                }
+        let scroll_area = match props.scroll {
+            ContainerScroll::None => None,
+            ContainerScroll::Horizontal => Some(egui::ScrollArea::horizontal()),
+            ContainerScroll::Vertical => Some(egui::ScrollArea::vertical()),
+            ContainerScroll::Both => Some(egui::ScrollArea::both()),
+        };
 
-                cursor_x = computed.x + computed.width;
+        let inner = match scroll_area {
+            None => container_body(ui, state, props, f),
+            Some(scroll_area) => {
+                scroll_area
+                    .auto_shrink([false, false])
+                    .show(ui, |scroll_ui| container_body(scroll_ui, state, props, f))
+                    .inner
             }
+        };
 
-            self.backend.end_row(line_ui, &row_props, line);
+        state.backend.end_container(ui, &props);
+        inner
+    }
+
+    /// Lays out children as columns of a 12-column grid.
+    ///
+    /// Each `col` call takes the next column; any other component called directly in the row
+    /// becomes its own auto-width column. Columns wrap onto new lines when their spans exceed
+    /// 12, separated by the row's vertical gutter.
+    ///
+    /// Columns are drawn immediately, so the row places them using the specs it recorded on the
+    /// previous pass. When the specs change (including the row's first appearance), the pass is
+    /// discarded with `egui::Context::request_discard` and re-run with the corrected layout, so
+    /// build code must be safe to run twice in one frame. See [`Row::id_salt`] for rows whose
+    /// position among their siblings changes.
+    ///
+    /// [`Row::id_salt`]: crate::components::Row::id_salt
+    pub fn row<R>(&mut self, row: impl Into<RowProps>, f: impl FnOnce(&mut UiRoot<'_>) -> R) -> R {
+        let props: RowProps = row.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.row(props, f));
+        }
+        self.sync_theme_mode();
+
+        let id = match props.id_salt {
+            Some(salt) => self.ui.make_persistent_id(salt),
+            None => self.ui.next_auto_id(),
+        };
+        let available = self.ui.available_rect_before_wrap();
+        let breakpoint =
+            resolve_active_breakpoint(available.width(), self.state.backend.breakpoints());
+        let line_gap = self.ui.spacing().item_spacing.y + props.spacing().gutter_y();
+        let mut cursor = RowCursor::new(self.ui.ctx(), id, props, breakpoint, available, line_gap);
+
+        let mut builder = egui::UiBuilder::new()
+            .max_rect(available)
+            .layout(egui::Layout::top_down(egui::Align::Min));
+        if let Some(salt) = props.id_salt {
+            builder = builder.id_salt(salt);
+        }
+        let mut row_ui = self.ui.new_child(builder);
+
+        let state = &mut *self.state;
+        let inner = f(&mut UiRoot {
+            ui: &mut row_ui,
+            state: &mut *state,
+            row: Some(&mut cursor),
         });
+
+        if let Some(line) = cursor.close_line() {
+            state.backend.end_row(&mut row_ui, &props, &line);
+        }
+        if let Some(row_rect) = cursor.finish(self.ui.ctx()) {
+            self.ui.advance_cursor_after_rect(row_rect);
+        }
+        inner
     }
 
-    fn render_computed_col(
-        &mut self,
-        ui: &mut egui::Ui,
-        col: &mut ColNode<'a>,
-        computed: &ComputedCol,
-    ) {
-        let col_props = col.props;
-        self.backend.begin_col(ui, &col_props, computed);
+    /// Draws `f` as a grid column.
+    ///
+    /// Inside a `row`, it takes the row's next column slot. Elsewhere it fills the available
+    /// width.
+    pub fn col<R>(&mut self, col: impl Into<ColProps>, f: impl FnOnce(&mut UiRoot<'_>) -> R) -> R {
+        let props = col.into();
+        self.state.report_col_validation_issues(&props);
+        if self.in_row() {
+            return self.row_col(props, f);
+        }
+        self.sync_theme_mode();
 
-        ui.allocate_ui_with_layout(
-            egui::vec2(computed.width.max(0.0), 0.0),
-            egui::Layout::top_down(egui::Align::Min),
-            |col_ui| {
-                self.render_nodes(col_ui, &mut col.children);
-            },
-        );
-
-        self.backend.end_col(ui, &col_props, computed);
-    }
-
-    fn render_standalone_col(&mut self, ui: &mut egui::Ui, col: &mut ColNode<'a>) {
+        let ui = &mut *self.ui;
+        let state = &mut *self.state;
         let computed = ComputedCol {
             source_index: 0,
             span: Span::Auto,
@@ -1078,16 +450,61 @@ impl<'a> UiRoot<'a> {
             width: ui.available_width(),
         };
 
-        self.render_computed_col(ui, col, &computed);
+        state.backend.begin_col(ui, &props, &computed);
+        let inner = ui
+            .allocate_ui_with_layout(
+                egui::vec2(computed.width.max(0.0), 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |col_ui| f(&mut UiRoot::new(col_ui, state)),
+            )
+            .inner;
+        state.backend.end_col(ui, &props, &computed);
+        inner
     }
 
-    fn render_card(&mut self, ui: &mut egui::Ui, card: &mut CardNode<'a>) {
-        let mut backend = std::mem::take(&mut self.backend);
-        let props = card.props.clone();
+    pub fn hstack<R>(
+        &mut self,
+        stack: impl Into<HStack>,
+        f: impl FnOnce(&mut UiRoot<'_>) -> R,
+    ) -> R {
+        let props = stack.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.hstack(props, f));
+        }
+        self.sync_theme_mode();
+
+        let state = &mut *self.state;
+        let body = |stack_ui: &mut egui::Ui| {
+            stack_ui.spacing_mut().item_spacing.x = props.resolved_gap();
+            f(&mut UiRoot::new(stack_ui, state))
+        };
+
+        if props.wrap {
+            self.ui.horizontal_wrapped(body).inner
+        } else {
+            self.ui.horizontal(body).inner
+        }
+    }
+
+    pub fn card<R>(
+        &mut self,
+        card: impl Into<CardProps>,
+        f: impl FnOnce(&mut UiRoot<'_>) -> R,
+    ) -> R {
+        let props = card.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.card(props, f));
+        }
+        self.sync_theme_mode();
+
+        let state = &mut *self.state;
+        // `render_card` keeps the backend borrowed while the body runs, so components inside the
+        // card draw with a fresh backend until the outer one is put back.
+        let mut backend = std::mem::take(&mut state.backend);
         let style = backend.card_style(&props);
         let theme = backend.theme().clone();
 
-        backend.render_card(ui, &props, |card_ui| {
+        let inner = backend.render_card(self.ui, &props, |card_ui| {
             if let Some(header) = &props.header {
                 EguiBackend::render_heading_span(card_ui, header, style.header_text, &theme);
                 if style.header_gap > 0.0 {
@@ -1095,7 +512,7 @@ impl<'a> UiRoot<'a> {
                 }
             }
 
-            self.render_nodes(card_ui, &mut card.children);
+            let inner = f(&mut UiRoot::new(card_ui, state));
 
             if let Some(footer) = &props.footer {
                 if style.footer_gap > 0.0 {
@@ -1104,19 +521,36 @@ impl<'a> UiRoot<'a> {
                 card_ui.separator();
                 EguiBackend::render_plain_span(card_ui, footer, style.footer_text, &theme);
             }
+
+            inner
         });
 
-        self.backend = backend;
+        state.backend = backend;
+        inner
     }
 
-    fn render_plot(&mut self, ui: &mut egui::Ui, plot: &mut PlotNode<'a>) {
-        let Some(body) = plot.body.take() else {
-            return;
-        };
+    pub fn chart_card<R, F>(&mut self, chart: impl Into<ChartCard>, f: F) -> R
+    where
+        F: for<'plot_ui> FnOnce(&mut egui_plot::PlotUi<'plot_ui>) -> R,
+    {
+        let chart = chart.into();
+        self.card(chart.card, |ui| ui.plot(chart.plot, f))
+    }
 
-        let style = self.backend.card_style(&CardProps::new());
+    pub fn plot<R, F>(&mut self, plot: impl Into<PlotArea>, f: F) -> R
+    where
+        F: for<'plot_ui> FnOnce(&mut egui_plot::PlotUi<'plot_ui>) -> R,
+    {
+        let props = plot.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.plot(props, f));
+        }
+        self.sync_theme_mode();
 
-        if let Some(title) = &plot.props.title {
+        let ui = &mut *self.ui;
+        let style = self.state.backend.card_style(&CardProps::new());
+
+        if let Some(title) = &props.title {
             let bold_face = crate::theme::fonts::FontFace::PropoBold;
             let rich_text = if crate::theme::fonts::ensure_face_registered(ui.ctx(), bold_face) {
                 egui::RichText::new(title)
@@ -1132,203 +566,560 @@ impl<'a> UiRoot<'a> {
             }
         }
 
-        let plot_widget = plot.props.build_plot(ui.available_width());
+        let plot_widget = props.build_plot(ui.available_width());
         ui.scope(|plot_scope| {
             let visuals = plot_scope.visuals_mut();
             visuals.override_text_color = Some(style.body_text);
             visuals.widgets.noninteractive.fg_stroke.color = style.border;
             visuals.widgets.noninteractive.bg_stroke.color = style.border;
 
-            plot_widget.show(plot_scope, |plot_ui| {
-                body(plot_ui);
-            });
+            plot_widget.show(plot_scope, f).inner
+        })
+        .inner
+    }
+
+    pub fn time_series_plot(
+        &mut self,
+        plot: impl Into<TimeSeriesPlotProps>,
+        dataset: &TimeSeriesDataset,
+        viewport: &mut ViewportState,
+    ) {
+        let props = plot.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.time_series_plot(props, dataset, viewport));
+        }
+        self.sync_theme_mode();
+        TimeSeriesPlot::show(self.ui, &props, dataset, viewport);
+    }
+
+    pub fn time_series_plot_from_source<S>(
+        &mut self,
+        plot: impl Into<TimeSeriesPlotProps>,
+        source: &S,
+        viewport: &mut ViewportState,
+    ) where
+        S: PlotDataSource + ?Sized,
+    {
+        let props = plot.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.time_series_plot_from_source(props, source, viewport));
+        }
+        self.sync_theme_mode();
+        let dataset = source.snapshot();
+        TimeSeriesPlot::show(self.ui, &props, &dataset, viewport);
+    }
+
+    pub fn badge(&mut self, badge: impl Into<BadgeProps>) {
+        let props = badge.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.badge(props));
+        }
+        self.sync_theme_mode();
+        self.state.backend.render_badge(self.ui, &props);
+    }
+
+    pub fn label(&mut self, label: impl Into<LabelProps>) {
+        let props = label.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.label(props));
+        }
+        self.sync_theme_mode();
+        self.state.backend.render_label(self.ui, &props);
+    }
+
+    pub fn text(&mut self, text: impl Into<TextProps>) {
+        let props = text.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.text(props));
+        }
+        self.sync_theme_mode();
+        self.state.backend.render_text(self.ui, &props);
+    }
+
+    /// Draws a button and returns its `egui::Response`, so `.clicked()`, `.hovered()`,
+    /// `.on_hover_text()` and friends work as in egui. `Button::on_click` still fires on click.
+    pub fn button(&mut self, button: Button) -> egui::Response {
+        if self.in_row() {
+            return self.loose_child(|ui| ui.button(button));
+        }
+        self.sync_theme_mode();
+        let response = self.state.backend.render_button(self.ui, &button);
+        if response.clicked()
+            && let Some(on_click) = button.on_click
+        {
+            on_click(self.ui.ctx());
+        }
+        response
+    }
+
+    pub fn alert(&mut self, alert: impl Into<AlertProps>) {
+        let props = alert.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.alert(props));
+        }
+        self.sync_theme_mode();
+        self.state.backend.render_alert(self.ui, &props);
+    }
+
+    pub fn progress(&mut self, progress: impl Into<ProgressProps>) {
+        let props = progress.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.progress(props));
+        }
+        self.sync_theme_mode();
+        self.state.backend.render_progress(self.ui, &props);
+    }
+
+    /// Draws a table and reports which row, if any, was clicked.
+    pub fn table(&mut self, table: impl Into<TableProps>) -> ItemClickResponse {
+        let props = table.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.table(props));
+        }
+        self.sync_theme_mode();
+
+        let table_seq = self.state.next_table_render_seq();
+        let backend = &mut self.state.backend;
+        let clicked = self
+            .ui
+            .push_id(("semantic_table", table_seq), |table_ui| {
+                backend.render_table(table_ui, &props, table_seq)
+            })
+            .inner;
+
+        dispatch_item_clicks(self.ui.ctx(), &clicked, |index| {
+            props.rows.get(index).and_then(|row| row.on_click)
+        })
+    }
+
+    /// Draws a close button and returns its `egui::Response`.
+    pub fn close_button(&mut self, close_button: impl Into<CloseButtonProps>) -> egui::Response {
+        let props = close_button.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.close_button(props));
+        }
+        self.sync_theme_mode();
+        let response = self.state.backend.render_close_button(self.ui, &props);
+        if response.clicked()
+            && let Some(on_click) = props.on_click
+        {
+            on_click(self.ui.ctx());
+        }
+        response
+    }
+
+    /// Draws pagination and reports which page item, if any, was clicked.
+    pub fn pagination(&mut self, pagination: impl Into<PaginationProps>) -> ItemClickResponse {
+        let props = pagination.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.pagination(props));
+        }
+        self.sync_theme_mode();
+        let clicked = self.state.backend.render_pagination(self.ui, &props);
+        dispatch_item_clicks(self.ui.ctx(), &clicked, |index| {
+            props.items.get(index).and_then(|item| item.on_click)
+        })
+    }
+
+    pub fn spinner(&mut self, spinner: impl Into<SpinnerProps>) {
+        let props = spinner.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.spinner(props));
+        }
+        self.sync_theme_mode();
+        self.state.backend.render_spinner(self.ui, &props);
+    }
+
+    pub fn placeholder(&mut self, placeholder: impl Into<PlaceholderProps>) {
+        let props = placeholder.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.placeholder(props));
+        }
+        self.sync_theme_mode();
+        self.state.backend.render_placeholder(self.ui, &props);
+    }
+
+    /// Draws a button group and reports which button, if any, was clicked.
+    pub fn button_group(&mut self, button_group: impl Into<ButtonGroupProps>) -> ItemClickResponse {
+        let props = button_group.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.button_group(props));
+        }
+        self.sync_theme_mode();
+        let clicked = self.state.backend.render_button_group(self.ui, &props);
+        dispatch_item_clicks(self.ui.ctx(), &clicked, |index| {
+            props.buttons.get(index).and_then(|button| button.on_click)
+        })
+    }
+
+    /// Draws a list group and reports which item, if any, was clicked.
+    pub fn list_group(&mut self, list_group: impl Into<ListGroupProps>) -> ItemClickResponse {
+        let props = list_group.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.list_group(props));
+        }
+        self.sync_theme_mode();
+        let clicked = self.state.backend.render_list_group(self.ui, &props);
+        dispatch_item_clicks(self.ui.ctx(), &clicked, |index| {
+            props.items.get(index).and_then(|item| item.on_click)
+        })
+    }
+
+    /// Draws a nav and reports which item, if any, was clicked.
+    pub fn nav(&mut self, nav: impl Into<NavProps>) -> ItemClickResponse {
+        let props = nav.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.nav(props));
+        }
+        self.sync_theme_mode();
+        let clicked = self.state.backend.render_nav(self.ui, &props);
+        dispatch_item_clicks(self.ui.ctx(), &clicked, |index| {
+            props.items.get(index).and_then(|item| item.on_click)
+        })
+    }
+
+    /// Draws a navbar and reports item and brand clicks.
+    pub fn navbar(&mut self, navbar: impl Into<NavbarProps>) -> NavbarResponse {
+        let props = navbar.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.navbar(props));
+        }
+        self.sync_theme_mode();
+        let result = self.state.backend.render_navbar(self.ui, &props);
+
+        if result.brand_clicked
+            && let Some(on_brand_click) = props.on_brand_click
+        {
+            on_brand_click(self.ui.ctx());
+        }
+
+        let items = dispatch_item_clicks(self.ui.ctx(), &result.clicked_items, |index| {
+            props.items.get(index).and_then(|item| item.on_click)
         });
+        NavbarResponse::new(items, result.brand_clicked)
+    }
+
+    /// Draws a dropdown and reports which menu item, if any, was clicked. Opening and closing
+    /// the menu is handled internally and isn't reported as a click.
+    pub fn dropdown<'s>(
+        &mut self,
+        state: impl Into<DisclosureState<'s>>,
+        dropdown: impl Into<DropdownProps>,
+    ) -> ItemClickResponse {
+        let mut disclosure = state.into();
+        let props = dropdown.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.dropdown(disclosure, props));
+        }
+        self.sync_theme_mode();
+
+        let open = disclosure.current(self.ui.ctx());
+        let result = self.state.backend.render_dropdown(self.ui, &props, open);
+
+        if result.toggle_clicked {
+            disclosure.toggle(self.ui.ctx());
+        }
+
+        if let Some(index) = result.clicked_item {
+            disclosure.set_current(self.ui.ctx(), false);
+            if let Some(on_click) = props.items.get(index).and_then(|item| item.on_click) {
+                on_click(self.ui.ctx());
+            }
+        }
+        ItemClickResponse::new(result.clicked_item)
+    }
+
+    pub fn form_label(&mut self, form_label: impl Into<FormLabelProps>) {
+        let props = form_label.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.form_label(props));
+        }
+        self.sync_theme_mode();
+        self.state.backend.render_form_label(self.ui, &props);
+    }
+
+    pub fn form_text(&mut self, form_text: impl Into<FormTextProps>) {
+        let props = form_text.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.form_text(props));
+        }
+        self.sync_theme_mode();
+        self.state.backend.render_form_text(self.ui, &props);
+    }
+
+    pub fn form_control(
+        &mut self,
+        value: &mut String,
+        form_control: impl Into<FormControlProps>,
+    ) -> ChangeResponse {
+        let props = form_control.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.form_control(value, props));
+        }
+        self.sync_theme_mode();
+        let changed = self
+            .state
+            .backend
+            .render_form_control(self.ui, value, &props);
+        dispatch_change(self.ui.ctx(), changed, props.on_change)
+    }
+
+    pub fn form_select(
+        &mut self,
+        selected_index: &mut usize,
+        form_select: impl Into<FormSelectProps>,
+    ) -> ChangeResponse {
+        let props = form_select.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.form_select(selected_index, props));
+        }
+        self.sync_theme_mode();
+        let changed = self
+            .state
+            .backend
+            .render_form_select(self.ui, selected_index, &props);
+        dispatch_change(self.ui.ctx(), changed, props.on_change)
+    }
+
+    pub fn form_check(
+        &mut self,
+        checked: &mut bool,
+        form_check: impl Into<FormCheckProps>,
+    ) -> ChangeResponse {
+        let props = form_check.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.form_check(checked, props));
+        }
+        self.sync_theme_mode();
+        let changed = self
+            .state
+            .backend
+            .render_form_check(self.ui, checked, &props);
+        dispatch_change(self.ui.ctx(), changed, props.on_change)
+    }
+
+    pub fn form_range(
+        &mut self,
+        value: &mut f32,
+        form_range: impl Into<FormRangeProps>,
+    ) -> ChangeResponse {
+        let props = form_range.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.form_range(value, props));
+        }
+        self.sync_theme_mode();
+        let changed = self.state.backend.render_form_range(self.ui, value, &props);
+        dispatch_change(self.ui.ctx(), changed, props.on_change)
+    }
+
+    pub fn floating_label(
+        &mut self,
+        value: &mut String,
+        floating_label: impl Into<FloatingLabelProps>,
+    ) -> ChangeResponse {
+        let props = floating_label.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.floating_label(value, props));
+        }
+        self.sync_theme_mode();
+        let changed = self
+            .state
+            .backend
+            .render_floating_label(self.ui, value, &props);
+        dispatch_change(self.ui.ctx(), changed, props.on_change)
+    }
+
+    pub fn validation_feedback(&mut self, validation_feedback: impl Into<ValidationFeedbackProps>) {
+        let props = validation_feedback.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.validation_feedback(props));
+        }
+        self.sync_theme_mode();
+        self.state
+            .backend
+            .render_validation_feedback(self.ui, &props);
     }
 }
 
-enum BuildScope<'a> {
-    Root(Vec<SemanticNode<'a>>),
-    Container {
-        props: ContainerProps,
-        children: Vec<SemanticNode<'a>>,
-    },
-    Row {
-        props: RowProps,
-        cols: Vec<ColNode<'a>>,
-    },
-    Col {
-        props: ColProps,
-        children: Vec<SemanticNode<'a>>,
-        implicit: bool,
-    },
-    Card {
-        props: CardProps,
-        children: Vec<SemanticNode<'a>>,
-    },
-    Disclosure {
-        state: DisclosureState<'a>,
-        children: Vec<SemanticNode<'a>>,
-    },
-    ActiveIndex {
-        state: ActiveIndexState<'a>,
-        children: Vec<SemanticNode<'a>>,
-    },
-    StyleOverride {
-        style_override: Option<StyleOverride<'a>>,
-        children: Vec<SemanticNode<'a>>,
-    },
-    ThemeVariant {
-        theme: egui::Theme,
-        children: Vec<SemanticNode<'a>>,
-    },
-}
-
-enum SemanticNode<'a> {
-    Container(ContainerNode<'a>),
-    Row(RowNode<'a>),
-    Col(ColNode<'a>),
-    Card(CardNode<'a>),
-    Plot(PlotNode<'a>),
-    Disclosure(DisclosureScopeNode<'a>),
-    ActiveIndex(ActiveIndexScopeNode<'a>),
-    RawEgui(RawEguiNode<'a>),
-    StyleOverride(StyleOverrideNode<'a>),
-    ThemeVariant(ThemeVariantNode<'a>),
-    Badge(BadgeProps),
-    Label(LabelProps),
-    Text(TextProps),
-    Button(Button),
-    Alert(AlertProps),
-    Progress(ProgressProps),
-    Table(TableProps),
-    CloseButton(CloseButtonProps),
-    Pagination(PaginationProps),
-    Spinner(SpinnerProps),
-    Placeholder(PlaceholderProps),
-    ButtonGroup(ButtonGroupProps),
-    ListGroup(ListGroupProps),
-    Nav(NavProps),
-    Navbar(NavbarProps),
-    Dropdown(DropdownNode<'a>),
-    FormLabel(FormLabelProps),
-    FormText(FormTextProps),
-    FormControl(FormControlNode<'a>),
-    FormSelect(FormSelectNode<'a>),
-    FormCheck(FormCheckNode<'a>),
-    FormRange(FormRangeNode<'a>),
-    FloatingLabel(FloatingLabelNode<'a>),
-    ValidationFeedback(ValidationFeedbackProps),
-}
-
-struct ContainerNode<'a> {
+fn container_body<R>(
+    ui: &mut egui::Ui,
+    state: &mut RootState,
     props: ContainerProps,
-    children: Vec<SemanticNode<'a>>,
+    f: impl FnOnce(&mut UiRoot<'_>) -> R,
+) -> R {
+    let available_width = ui.available_width();
+    let container_width = state
+        .backend
+        .resolve_container_width(&props, available_width);
+
+    let horizontal_padding = props.padding.gutter_x();
+    let vertical_padding = props.padding.gutter_y();
+
+    ui.horizontal_top(|row_ui| {
+        if !props.fluid {
+            let leading_space = ((available_width - container_width) * 0.5).max(0.0);
+            if leading_space > 0.0 {
+                row_ui.add_space(leading_space);
+            }
+        }
+
+        row_ui
+            .allocate_ui_with_layout(
+                egui::vec2(container_width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                |container_ui| {
+                    if vertical_padding > 0.0 {
+                        container_ui.add_space(vertical_padding);
+                    }
+
+                    let inner = container_ui
+                        .horizontal_top(|padding_ui| {
+                            if horizontal_padding > 0.0 {
+                                padding_ui.add_space(horizontal_padding);
+                            }
+
+                            let content_width =
+                                (container_width - horizontal_padding * 2.0).max(0.0);
+                            let inner = padding_ui
+                                .allocate_ui_with_layout(
+                                    egui::vec2(content_width, 0.0),
+                                    egui::Layout::top_down(egui::Align::Min),
+                                    |content_ui| f(&mut UiRoot::new(content_ui, state)),
+                                )
+                                .inner;
+
+                            if horizontal_padding > 0.0 {
+                                padding_ui.add_space(horizontal_padding);
+                            }
+
+                            inner
+                        })
+                        .inner;
+
+                    if vertical_padding > 0.0 {
+                        container_ui.add_space(vertical_padding);
+                    }
+
+                    inner
+                },
+            )
+            .inner
+    })
+    .inner
 }
 
-struct RowNode<'a> {
-    props: RowProps,
-    cols: Vec<ColNode<'a>>,
+/// Fires each clicked item's `on_click` handler and builds the collection's response.
+fn dispatch_item_clicks(
+    ctx: &egui::Context,
+    clicked: &[usize],
+    handler_for: impl Fn(usize) -> Option<ClickHandler>,
+) -> ItemClickResponse {
+    for &index in clicked {
+        if let Some(on_click) = handler_for(index) {
+            on_click(ctx);
+        }
+    }
+    ItemClickResponse::from_clicked(clicked)
 }
 
-struct ColNode<'a> {
-    props: ColProps,
-    children: Vec<SemanticNode<'a>>,
-    implicit: bool,
-}
-
-struct CardNode<'a> {
-    props: CardProps,
-    children: Vec<SemanticNode<'a>>,
-}
-
-struct PlotNode<'a> {
-    props: PlotArea,
-    body: Option<PlotBody<'a>>,
-}
-
-struct DisclosureScopeNode<'a> {
-    state: DisclosureState<'a>,
-    children: Vec<SemanticNode<'a>>,
-}
-
-struct ActiveIndexScopeNode<'a> {
-    state: ActiveIndexState<'a>,
-    children: Vec<SemanticNode<'a>>,
-}
-
-struct RawEguiNode<'a> {
-    body: Option<RawEguiBody<'a>>,
-}
-
-struct StyleOverrideNode<'a> {
-    style_override: Option<StyleOverride<'a>>,
-    children: Vec<SemanticNode<'a>>,
-}
-
-struct ThemeVariantNode<'a> {
-    theme: egui::Theme,
-    children: Vec<SemanticNode<'a>>,
-}
-
-struct DropdownNode<'a> {
-    props: DropdownProps,
-    state: DisclosureState<'a>,
-}
-
-struct FormControlNode<'a> {
-    value: &'a mut String,
-    props: FormControlProps,
-}
-
-struct FormSelectNode<'a> {
-    selected_index: &'a mut usize,
-    props: FormSelectProps,
-}
-
-struct FormCheckNode<'a> {
-    checked: &'a mut bool,
-    props: FormCheckProps,
-}
-
-struct FormRangeNode<'a> {
-    value: &'a mut f32,
-    props: FormRangeProps,
-}
-
-struct FloatingLabelNode<'a> {
-    value: &'a mut String,
-    props: FloatingLabelProps,
+/// Fires `on_change` if the value changed and builds the input's response.
+fn dispatch_change(
+    ctx: &egui::Context,
+    changed: bool,
+    on_change: Option<ClickHandler>,
+) -> ChangeResponse {
+    if changed && let Some(on_change) = on_change {
+        on_change(ctx);
+    }
+    ChangeResponse::new(changed)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::Col;
+    use crate::components::{Col, Row};
+
+    /// Runs one egui pass and builds `f` into a fresh root, returning the last pass's value.
+    fn run_frame<R>(ctx: &egui::Context, mut f: impl FnMut(&mut UiRoot<'_>) -> R) -> R {
+        let mut result = None;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            result = Some(crate::show_root(ctx, &mut f));
+        });
+        result.expect("egui pass should run the build closure")
+    }
 
     #[test]
-    fn state_scopes_build_without_panicking() {
+    fn state_scopes_render_without_panicking() {
         let ctx = egui::Context::default();
         let mut open = true;
         let mut active_index = 0_usize;
-        let mut ui = UiRoot::new(&ctx);
 
-        ui.with_disclosure_state(&mut open, |ui| {
-            ui.with_active_index_state(&mut active_index, |_ui| {});
+        run_frame(&ctx, |ui| {
+            ui.with_disclosure_state(&mut open, |ui| {
+                ui.with_active_index_state(&mut active_index, |_ui| {});
+            });
+        });
+    }
+
+    #[test]
+    fn closed_disclosure_skips_its_body() {
+        let ctx = egui::Context::default();
+        let mut open = false;
+
+        let (closed, opened) = run_frame(&ctx, |ui| {
+            let closed = ui.with_disclosure_state(&mut open, |_ui| "closed body");
+            let opened = ui.with_disclosure_state(
+                DisclosureState::uncontrolled("bee-ui.test.disclosure.open", true),
+                |_ui| "open body",
+            );
+            (closed, opened)
         });
 
-        // Compile-smoke for tree construction: rendering is gated by egui frame lifecycle.
-        ui.render_with_central_panel();
+        assert_eq!(closed, None);
+        assert_eq!(opened, Some("open body"));
+    }
+
+    #[test]
+    fn scopes_return_their_closure_values() {
+        let ctx = egui::Context::default();
+
+        let values = run_frame(&ctx, |ui| {
+            let container = ui.container(ContainerProps::fluid(), |ui| {
+                ui.card(CardProps::new(), |ui| ui.col(Col::new(), |_ui| 1))
+            });
+            let stack = ui.hstack(HStack::new().gap(4.0), |ui| ui.raw(|_egui_ui| 2));
+            let styled = ui.with_style_override(|_style| {}, |_ui| 3);
+            let themed = ui.with_theme_variant(egui::Theme::Light, |_ui| 4);
+            (container, stack, styled, themed)
+        });
+
+        assert_eq!(values, (1, 2, 3, 4));
+    }
+
+    #[test]
+    fn standalone_col_fills_available_width() {
+        let ctx = egui::Context::default();
+
+        let (available, col_width) = run_frame(&ctx, |ui| {
+            let available = ui.raw(|egui_ui| egui_ui.available_width());
+            let col_width = ui.col(Col::new(), |ui| ui.raw(|egui_ui| egui_ui.available_width()));
+            (available, col_width)
+        });
+
+        assert!(available > 0.0);
+        assert_eq!(col_width, available);
     }
 
     #[test]
     fn strict_mode_reports_invalid_col_props() {
         let ctx = egui::Context::default();
-        let mut ui = UiRoot::new(&ctx);
 
-        ui.set_strict_mode(true);
-        ui.col(Col::new().xs(Span::N(0)).offset(13).order(99), |_ui| {});
+        let errors = run_frame(&ctx, |ui| {
+            ui.set_strict_mode(true);
+            ui.col(Col::new().xs(Span::N(0)).offset(13).order(99), |_ui| {});
+            ui.take_strict_mode_errors()
+        });
 
-        let errors = ui.take_strict_mode_errors();
         assert_eq!(errors.len(), 3);
         assert!(
             errors
@@ -1355,17 +1146,439 @@ mod tests {
         use std::{cell::RefCell, rc::Rc};
 
         let reported = Rc::new(RefCell::new(Vec::<String>::new()));
-
         let ctx = egui::Context::default();
-        let mut ui = UiRoot::new(&ctx);
-        ui.set_strict_mode(true);
 
-        let sink = Rc::clone(&reported);
-        ui.set_strict_mode_error_reporter(move |error| sink.borrow_mut().push(error.to_string()));
+        run_frame(&ctx, |ui| {
+            reported.borrow_mut().clear();
+            ui.set_strict_mode(true);
 
-        ui.col(Col::new().xs(Span::N(0)), |_ui| {});
+            let sink = Rc::clone(&reported);
+            ui.set_strict_mode_error_reporter(move |error| {
+                sink.borrow_mut().push(error.to_string())
+            });
+
+            ui.col(Col::new().xs(Span::N(0)), |_ui| {});
+        });
 
         assert_eq!(reported.borrow().len(), 1);
         assert!(reported.borrow()[0].contains("ColProps.xs"));
+    }
+
+    const TOLERANCE: f32 = 0.5;
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() <= TOLERANCE,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    /// Runs one frame on a fixed-size screen, returning the last pass's value and how many
+    /// passes egui ran (more than one means a pass was discarded).
+    fn run_counted<R>(ctx: &egui::Context, f: impl FnMut(&mut UiRoot<'_>) -> R) -> (R, usize) {
+        run_with_events(ctx, Vec::new(), f)
+    }
+
+    /// Like [`run_counted`], but feeds `events` into the frame's input.
+    fn run_with_events<R>(
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        mut f: impl FnMut(&mut UiRoot<'_>) -> R,
+    ) -> (R, usize) {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1000.0, 800.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let mut passes = 0;
+        let mut result = None;
+        let _ = ctx.run(input, |ctx| {
+            passes += 1;
+            result = Some(crate::show_root(ctx, &mut f));
+        });
+        (
+            result.expect("egui pass should run the build closure"),
+            passes,
+        )
+    }
+
+    /// The rectangle a column body may draw into.
+    fn col_rect(ui: &mut UiRoot<'_>, col: Col) -> egui::Rect {
+        ui.col(col, |ui| ui.raw(|egui_ui| egui_ui.max_rect()))
+    }
+
+    fn two_or_three_cols(ui: &mut UiRoot<'_>, three: bool) {
+        ui.row(Row::new(), |ui| {
+            ui.col(Col::new(), |_ui| {});
+            ui.col(Col::new(), |_ui| {});
+            if three {
+                ui.col(Col::new(), |_ui| {});
+            }
+        });
+    }
+
+    #[test]
+    fn row_first_appearance_requests_a_discard_and_stable_rows_do_not() {
+        let ctx = egui::Context::default();
+
+        let ((), passes) = run_counted(&ctx, |ui| two_or_three_cols(ui, false));
+        assert_eq!(passes, 2, "first appearance should re-run the pass");
+
+        let ((), passes) = run_counted(&ctx, |ui| two_or_three_cols(ui, false));
+        assert_eq!(passes, 1, "a stable row should not discard");
+    }
+
+    #[test]
+    fn adding_a_column_requests_exactly_one_discard() {
+        let ctx = egui::Context::default();
+        run_counted(&ctx, |ui| two_or_three_cols(ui, false));
+        run_counted(&ctx, |ui| two_or_three_cols(ui, false));
+
+        let ((), passes) = run_counted(&ctx, |ui| two_or_three_cols(ui, true));
+        assert_eq!(passes, 2);
+
+        let ((), passes) = run_counted(&ctx, |ui| two_or_three_cols(ui, true));
+        assert_eq!(passes, 1);
+    }
+
+    #[test]
+    fn empty_row_does_not_discard_or_allocate() {
+        let ctx = egui::Context::default();
+
+        let ((before, after), passes) = run_counted(&ctx, |ui| {
+            let before = ui.raw(|egui_ui| egui_ui.cursor().top());
+            ui.row(Row::new(), |_ui| {});
+            let after = ui.raw(|egui_ui| egui_ui.cursor().top());
+            (before, after)
+        });
+
+        assert_eq!(passes, 1);
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn auto_columns_split_the_remaining_width_equally() {
+        let ctx = egui::Context::default();
+        let build = |ui: &mut UiRoot<'_>| {
+            let row_left = ui.raw(|egui_ui| egui_ui.available_rect_before_wrap().left());
+            let width = ui.raw(|egui_ui| egui_ui.available_width());
+            let rects = ui.row(Row::new().gutter_x(10.0), |ui| {
+                [
+                    col_rect(ui, Col::new().xs(6)),
+                    col_rect(ui, Col::new()),
+                    col_rect(ui, Col::new()),
+                ]
+            });
+            (row_left, width, rects)
+        };
+
+        run_counted(&ctx, build);
+        let ((row_left, width, [fixed, auto_a, auto_b]), passes) = run_counted(&ctx, build);
+        assert_eq!(passes, 1);
+
+        let unit = (width - 2.0 * 10.0) / 12.0;
+        assert_close(fixed.width(), 6.0 * unit);
+        assert_close(auto_a.width(), 3.0 * unit);
+        assert_close(auto_b.width(), 3.0 * unit);
+
+        assert_close(fixed.left(), row_left);
+        assert_close(auto_a.left(), fixed.right() + 10.0);
+        assert_close(auto_b.left(), auto_a.right() + 10.0);
+        assert_close(fixed.top(), auto_a.top());
+        assert_close(fixed.top(), auto_b.top());
+    }
+
+    #[test]
+    fn row_wraps_each_loose_child_in_its_own_col() {
+        let ctx = egui::Context::default();
+        let build = |ui: &mut UiRoot<'_>| {
+            let width = ui.raw(|egui_ui| egui_ui.available_width());
+            let (first, second) = ui.row(Row::new(), |ui| {
+                let first = ui.raw(|egui_ui| egui_ui.max_rect());
+                ui.label(LabelProps::new("loose label"));
+                let second = ui.raw(|egui_ui| egui_ui.max_rect());
+                (first, second)
+            });
+            (width, first, second)
+        };
+
+        run_counted(&ctx, build);
+        let ((width, first, second), _) = run_counted(&ctx, build);
+
+        assert_close(first.width(), width / 3.0);
+        assert_close(second.width(), width / 3.0);
+        assert_close(second.left() - first.left(), 2.0 * width / 3.0);
+    }
+
+    #[test]
+    fn hstack_keeps_children_together_inside_a_row() {
+        let ctx = egui::Context::default();
+        let build = |ui: &mut UiRoot<'_>| {
+            let width = ui.raw(|egui_ui| egui_ui.available_width());
+            let (stack, raw) = ui.row(Row::new(), |ui| {
+                let stack = ui.hstack(HStack::new(), |ui| {
+                    ui.label(LabelProps::new("a"));
+                    ui.label(LabelProps::new("b"));
+                    ui.raw(|egui_ui| egui_ui.max_rect())
+                });
+                let raw = ui.raw(|egui_ui| egui_ui.max_rect());
+                (stack, raw)
+            });
+            (width, stack, raw)
+        };
+
+        run_counted(&ctx, build);
+        let ((width, stack, raw), _) = run_counted(&ctx, build);
+
+        assert_close(raw.width(), width / 2.0);
+        assert!(stack.right() <= raw.left() + TOLERANCE);
+    }
+
+    #[test]
+    fn wrapped_lines_start_below_the_tallest_column_plus_gutter() {
+        let ctx = egui::Context::default();
+        let build = |ui: &mut UiRoot<'_>| {
+            let item_spacing_y = ui.raw(|egui_ui| egui_ui.spacing().item_spacing.y);
+            let (short_bottom, tall_bottom, wrapped) = ui.row(Row::new().gutter_y(8.0), |ui| {
+                let short_bottom = ui.col(Col::new().xs(6), |ui| {
+                    ui.raw(|egui_ui| {
+                        egui_ui.allocate_space(egui::vec2(10.0, 20.0));
+                        egui_ui.min_rect().bottom()
+                    })
+                });
+                let tall_bottom = ui.col(Col::new().xs(6), |ui| {
+                    ui.raw(|egui_ui| {
+                        egui_ui.allocate_space(egui::vec2(10.0, 50.0));
+                        egui_ui.min_rect().bottom()
+                    })
+                });
+                let wrapped = col_rect(ui, Col::new().xs(12));
+                (short_bottom, tall_bottom, wrapped)
+            });
+            let after_row = ui.raw(|egui_ui| egui_ui.cursor().top());
+            (
+                item_spacing_y,
+                short_bottom,
+                tall_bottom,
+                wrapped,
+                after_row,
+            )
+        };
+
+        run_counted(&ctx, build);
+        let ((item_spacing_y, short_bottom, tall_bottom, wrapped, after_row), passes) =
+            run_counted(&ctx, build);
+
+        assert_eq!(passes, 1);
+        assert!(short_bottom < tall_bottom);
+        assert_close(wrapped.top(), tall_bottom + item_spacing_y + 8.0);
+        // The empty wrapped column still claims its line, and the row's height is allocated
+        // in the parent so later widgets start below it.
+        assert!(after_row >= wrapped.top());
+    }
+
+    #[test]
+    fn row_allocates_its_height_in_the_parent() {
+        let ctx = egui::Context::default();
+        let build = |ui: &mut UiRoot<'_>| {
+            let content_bottom = ui.row(Row::new(), |ui| {
+                ui.col(Col::new(), |ui| {
+                    ui.raw(|egui_ui| {
+                        egui_ui.allocate_space(egui::vec2(10.0, 40.0));
+                        egui_ui.min_rect().bottom()
+                    })
+                })
+            });
+            let next_top = ui.raw(|egui_ui| egui_ui.cursor().top());
+            (content_bottom, next_top)
+        };
+
+        run_counted(&ctx, build);
+        let ((content_bottom, next_top), _) = run_counted(&ctx, build);
+        assert!(next_top >= content_bottom);
+    }
+
+    #[test]
+    fn nested_rows_settle_in_the_first_frame() {
+        let ctx = egui::Context::default();
+        let build = |ui: &mut UiRoot<'_>| {
+            ui.row(Row::new(), |ui| {
+                ui.col(Col::new().xs(6), |ui| {
+                    ui.row(Row::new(), |ui| {
+                        ui.col(Col::new(), |_ui| {});
+                        ui.col(Col::new(), |_ui| {});
+                    });
+                });
+                ui.col(Col::new().xs(6), |_ui| {});
+            });
+        };
+
+        let ((), passes) = run_counted(&ctx, build);
+        assert_eq!(passes, 2);
+        let ((), passes) = run_counted(&ctx, build);
+        assert_eq!(passes, 1);
+    }
+
+    #[test]
+    fn id_salt_keeps_the_cached_layout_when_a_row_moves() {
+        fn build(ui: &mut UiRoot<'_>, with_heading: bool, row: Row) {
+            if with_heading {
+                ui.label(LabelProps::new("heading"));
+            }
+            ui.row(row, |ui| {
+                ui.col(Col::new(), |_ui| {});
+                ui.col(Col::new(), |_ui| {});
+            });
+        }
+
+        let salted = egui::Context::default();
+        run_counted(&salted, |ui| {
+            build(ui, false, Row::new().id_salt("metrics"))
+        });
+        let ((), passes) =
+            run_counted(&salted, |ui| build(ui, true, Row::new().id_salt("metrics")));
+        assert_eq!(
+            passes, 1,
+            "a salted row keeps its layout when siblings change"
+        );
+
+        let unsalted = egui::Context::default();
+        run_counted(&unsalted, |ui| build(ui, false, Row::new()));
+        let ((), passes) = run_counted(&unsalted, |ui| build(ui, true, Row::new()));
+        assert_eq!(
+            passes, 2,
+            "an unsalted row re-measures when its position changes"
+        );
+    }
+
+    /// Pointer events for a primary-button press and release at `pos` within one frame.
+    fn click_at(pos: egui::Pos2) -> Vec<egui::Event> {
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        vec![egui::Event::PointerMoved(pos), button(true), button(false)]
+    }
+
+    #[test]
+    fn button_reports_clicked_on_the_click_frame_only() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static ON_CLICK_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+        let ctx = egui::Context::default();
+        let build = |ui: &mut UiRoot<'_>| {
+            let response = ui.button(Button::primary("Deploy").on_click(|_ctx| {
+                ON_CLICK_CALLS.fetch_add(1, Ordering::SeqCst);
+            }));
+            // Read the counter in the same pass to show `on_click` isn't deferred.
+            (
+                response.rect,
+                response.clicked(),
+                ON_CLICK_CALLS.load(Ordering::SeqCst),
+            )
+        };
+
+        let ((rect, clicked, calls), _) = run_counted(&ctx, build);
+        assert!(!clicked);
+        assert_eq!(calls, 0);
+        assert!(rect.is_positive());
+
+        let ((_, clicked, calls), passes) = run_with_events(&ctx, click_at(rect.center()), build);
+        assert_eq!(passes, 1);
+        assert!(clicked, "the click should be reported in the same pass");
+        assert_eq!(calls, 1, "`on_click` should fire in the same pass");
+
+        let ((_, clicked, calls), _) = run_counted(&ctx, build);
+        assert!(
+            !clicked,
+            "the click should not carry over to the next frame"
+        );
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn clicking_outside_a_button_does_not_report_a_click() {
+        let ctx = egui::Context::default();
+        let build = |ui: &mut UiRoot<'_>| {
+            let response = ui.button(Button::primary("Deploy"));
+            (response.rect, response.clicked())
+        };
+
+        let ((rect, _), _) = run_counted(&ctx, build);
+        let outside = rect.right_bottom() + egui::vec2(50.0, 50.0);
+        let ((_, clicked), _) = run_with_events(&ctx, click_at(outside), build);
+        assert!(!clicked);
+    }
+
+    #[test]
+    fn button_inside_a_row_reports_clicks() {
+        let ctx = egui::Context::default();
+        let build = |ui: &mut UiRoot<'_>| {
+            ui.row(Row::new(), |ui| {
+                ui.col(Col::new(), |_ui| {});
+                ui.col(Col::new(), |ui| {
+                    let response = ui.button(Button::primary("Deploy"));
+                    (response.rect, response.clicked())
+                })
+            })
+        };
+
+        // The first frame measures the row and discards; the second is stable.
+        run_counted(&ctx, build);
+        let ((rect, clicked), passes) = run_counted(&ctx, build);
+        assert_eq!(passes, 1);
+        assert!(!clicked);
+
+        let ((_, clicked), passes) = run_with_events(&ctx, click_at(rect.center()), build);
+        assert_eq!(passes, 1);
+        assert!(clicked);
+
+        let ((_, clicked), _) = run_counted(&ctx, build);
+        assert!(!clicked);
+    }
+
+    #[test]
+    fn list_group_reports_the_clicked_index_on_the_click_frame_only() {
+        const ITEMS: usize = 3;
+
+        let ctx = egui::Context::default();
+        let build = |ui: &mut UiRoot<'_>| {
+            // A standalone col's `min_rect` is exactly the list's bounds.
+            ui.col(Col::new(), |ui| {
+                let response = ui.list_group(
+                    ListGroupProps::new()
+                        .flush(true)
+                        .item("Overview")
+                        .item("Jobs")
+                        .item("Alerts"),
+                );
+                (ui.raw(|egui_ui| egui_ui.min_rect()), response)
+            })
+        };
+
+        let ((list_rect, response), _) = run_counted(&ctx, build);
+        assert!(!response.clicked());
+        assert!(list_rect.is_positive());
+
+        // Flush list items have no spacing between them, so each takes an equal share.
+        let item_height = list_rect.height() / ITEMS as f32;
+        let second_item = egui::pos2(list_rect.left() + 10.0, list_rect.top() + 1.5 * item_height);
+
+        let ((_, response), passes) = run_with_events(&ctx, click_at(second_item), build);
+        assert_eq!(passes, 1);
+        assert!(response.clicked());
+        assert_eq!(response.clicked_index(), Some(1));
+        assert!(response.item_clicked(1));
+        assert!(!response.item_clicked(0));
+
+        let ((_, response), _) = run_counted(&ctx, build);
+        assert!(!response.clicked());
+        assert_eq!(response.clicked_index(), None);
     }
 }

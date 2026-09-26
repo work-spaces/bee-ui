@@ -2,7 +2,7 @@ use crate::prelude::*;
 
 use super::{super::state, shared};
 
-pub(super) fn render_view_form<'a>(ui: &mut UiRoot<'a>, demo_state: &'a mut state::DemoState) {
+pub(super) fn render_view_form(ui: &mut UiRoot<'_>, demo_state: &mut state::DemoState) {
     let change_summary_valid = demo_state.form_change_summary.trim().len() >= 12;
     let requester_email_valid = looks_like_email(&demo_state.form_requester_email);
     let runbook_path_valid = demo_state.form_runbook_path.trim().contains('/');

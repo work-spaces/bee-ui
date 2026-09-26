@@ -18,10 +18,10 @@ mod shared;
 mod tables;
 mod typography_fonts_icons;
 
-pub(super) fn render_demo_view<'a>(
-    ui: &mut UiRoot<'a>,
+pub(super) fn render_demo_view(
+    ui: &mut UiRoot<'_>,
     active_view: DemoView,
-    demo_state: &'a mut state::DemoState,
+    demo_state: &mut state::DemoState,
 ) {
     ui.card(
         Card::new()

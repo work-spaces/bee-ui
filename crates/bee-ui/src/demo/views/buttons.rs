@@ -9,7 +9,7 @@ pub(super) fn render_view_buttons(ui: &mut UiRoot<'_>) {
             .outline(),
         |ui| {
             ui.text(Text::new(
-                "Buttons model high-confidence control-plane actions. Hover text explains intent, while callbacks persist the interaction trace.",
+                "Buttons model high-confidence control-plane actions. Hover text explains intent, and each button returns an egui::Response, so clicks are handled with `.clicked()` in the same pass.",
             ));
         },
     );
@@ -41,31 +41,38 @@ pub(super) fn render_view_buttons(ui: &mut UiRoot<'_>) {
             .outline()
             .footer("Deploy, pause, rollback, drain, and retry actions"),
         |ui| {
-            ui.button(
-                Button::primary("Deploy canary")
-                    .hover_text("Deploy scheduler canary to prod-b")
-                    .on_click(state::groups_button_deploy_clicked),
-            );
-            ui.button(
-                Button::warning("Pause rollout")
-                    .hover_text("Pause rollout while investigating metrics")
-                    .on_click(state::groups_button_pause_clicked),
-            );
-            ui.button(
-                Button::danger("Rollback")
-                    .hover_text("Rollback to last healthy release")
-                    .on_click(state::groups_button_rollback_clicked),
-            );
-            ui.button(
-                Button::dark("Drain node pool")
-                    .hover_text("Drain prod-b worker node pool")
-                    .on_click(state::buttons_drain_pool_clicked),
-            );
-            ui.button(
-                Button::info("Retry failed checks")
-                    .hover_text("Retry health checks after mitigation")
-                    .on_click(state::buttons_retry_checks_clicked),
-            );
+            let actions = [
+                (
+                    Button::primary("Deploy canary")
+                        .hover_text("Deploy scheduler canary to prod-b"),
+                    "Button: Deploy canary triggered",
+                ),
+                (
+                    Button::warning("Pause rollout")
+                        .hover_text("Pause rollout while investigating metrics"),
+                    "Button: Pause rollout triggered",
+                ),
+                (
+                    Button::danger("Rollback").hover_text("Rollback to last healthy release"),
+                    "Button: Rollback triggered",
+                ),
+                (
+                    Button::dark("Drain node pool").hover_text("Drain prod-b worker node pool"),
+                    "Button: Drain node pool triggered",
+                ),
+                (
+                    Button::info("Retry failed checks")
+                        .hover_text("Retry health checks after mitigation"),
+                    "Button: Retry failed checks triggered",
+                ),
+            ];
+
+            for (button, action) in actions {
+                if ui.button(button).clicked() {
+                    state::set_last_action(ui.context(), action);
+                }
+            }
+
             ui.button(
                 Button::secondary("Escalate")
                     .hover_text("Escalation disabled until runbook owner confirms")
