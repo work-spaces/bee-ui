@@ -265,12 +265,12 @@
 //! });
 //! ```
 
+pub mod chart;
 pub mod components;
 pub mod core;
 pub mod demo;
 pub mod interop;
 pub mod layout;
-pub mod plot;
 pub mod prelude;
 pub mod render;
 pub mod theme;

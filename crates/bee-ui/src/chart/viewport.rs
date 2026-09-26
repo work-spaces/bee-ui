@@ -492,7 +492,7 @@ fn approx_eq(a: f64, b: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plot::{PlotPoint, TimeSeries, TimeSeriesDataset};
+    use crate::chart::{PlotPoint, TimeSeries, TimeSeriesDataset};
 
     fn sample_dataset() -> TimeSeriesDataset {
         TimeSeriesDataset::new(vec![

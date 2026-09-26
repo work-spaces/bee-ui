@@ -1,6 +1,10 @@
 use std::fmt;
 
 use crate::{
+    chart::{
+        ChartCard, PlotArea, PlotDataSource, TimeSeriesDataset, TimeSeriesPlot,
+        TimeSeriesPlotProps, ViewportState,
+    },
     components::{
         ActiveIndexState, AlertProps, BadgeProps, Button, ButtonGroupProps, CardProps,
         CloseButtonProps, ColProps, ColValidationIssue, ContainerProps, ContainerScroll,
@@ -14,10 +18,6 @@ use crate::{
         row_layout::RowCursor,
     },
     layout::{ComputedCol, Span, resolve_active_breakpoint},
-    plot::{
-        ChartCard, PlotArea, PlotDataSource, TimeSeriesDataset, TimeSeriesPlot,
-        TimeSeriesPlotProps, ViewportState,
-    },
     render::{Backend, EguiBackend},
 };
 

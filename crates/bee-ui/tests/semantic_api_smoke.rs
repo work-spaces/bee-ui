@@ -1,4 +1,4 @@
-use bee_ui::plot::{clamp_x_window_to_limits, compute_data_bounds, compute_x_navigation_limits};
+use bee_ui::chart::{clamp_x_window_to_limits, compute_data_bounds, compute_x_navigation_limits};
 use bee_ui::prelude::*;
 
 /// `show_root` must run inside an egui pass, so each smoke test builds one frame.
