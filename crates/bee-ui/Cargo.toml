@@ -7,6 +7,7 @@ edition = "2024"
 egui = "0.33"
 egui_plot = "0.34"
 egui_table = "0.6"
+walkers = "0.50"
 sha2 = "0.10"
 
 zstd = "0.13"

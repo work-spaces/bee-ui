@@ -534,8 +534,13 @@ impl Backend for EguiBackend {
             egui::Margin::symmetric(as_i8(style.body_padding_x), as_i8(style.body_padding_y));
 
         let card_width = normalize_non_negative(ui.available_width());
+        let card_height = if props.fill_height {
+            normalize_non_negative(ui.available_height())
+        } else {
+            0.0
+        };
         ui.allocate_ui_with_layout(
-            egui::vec2(card_width, 0.0),
+            egui::vec2(card_width, card_height),
             egui::Layout::top_down(egui::Align::Min),
             |card_slot_ui| {
                 frame

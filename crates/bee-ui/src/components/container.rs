@@ -22,6 +22,7 @@ pub struct ContainerProps {
     pub max_width: Option<f32>,
     pub padding: Spacing,
     pub scroll: ContainerScroll,
+    pub fill_height: bool,
 }
 
 impl ContainerProps {
@@ -31,6 +32,7 @@ impl ContainerProps {
             max_width: None,
             padding: Spacing::new(0.0, 0.0),
             scroll: ContainerScroll::None,
+            fill_height: false,
         }
     }
 
@@ -40,6 +42,7 @@ impl ContainerProps {
             max_width: None,
             padding: Spacing::new(0.0, 0.0),
             scroll: ContainerScroll::None,
+            fill_height: false,
         }
     }
 
@@ -50,6 +53,11 @@ impl ContainerProps {
 
     pub fn padding(mut self, padding: Spacing) -> Self {
         self.padding = padding;
+        self
+    }
+
+    pub fn fill_height(mut self) -> Self {
+        self.fill_height = true;
         self
     }
 

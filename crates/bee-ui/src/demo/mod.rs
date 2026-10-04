@@ -33,10 +33,11 @@ pub(super) enum DemoView {
     ProgressSpinners,
     Tables,
     Plots,
+    Map,
 }
 
 impl DemoView {
-    pub(super) const ALL: [Self; 14] = [
+    pub(super) const ALL: [Self; 15] = [
         Self::Overview,
         Self::GridRowCol,
         Self::TypographyFontsIcons,
@@ -51,6 +52,7 @@ impl DemoView {
         Self::ProgressSpinners,
         Self::Tables,
         Self::Plots,
+        Self::Map,
     ];
 
     const fn storage_value(self) -> u8 {
@@ -69,6 +71,7 @@ impl DemoView {
             Self::Tables => 11,
             Self::Plots => 12,
             Self::Form => 13,
+            Self::Map => 14,
         }
     }
 
@@ -88,6 +91,7 @@ impl DemoView {
             11 => Some(Self::Tables),
             12 => Some(Self::Plots),
             13 => Some(Self::Form),
+            14 => Some(Self::Map),
             _ => None,
         }
     }
@@ -108,6 +112,7 @@ impl DemoView {
             Self::ProgressSpinners => "Progress/Spinners",
             Self::Tables => "Tables",
             Self::Plots => "Plots",
+            Self::Map => "Map",
         }
     }
 
@@ -127,6 +132,7 @@ impl DemoView {
             Self::ProgressSpinners => "Rollout progress and background checks",
             Self::Tables => "Operational datasets with styled and interactive rows",
             Self::Plots => "Latency, error, and throughput trend visualizations",
+            Self::Map => "Interactive maps with OSM tiles and location controls",
         }
     }
 
@@ -146,6 +152,7 @@ impl DemoView {
             Self::ProgressSpinners => "Feedback",
             Self::Tables => "Data",
             Self::Plots => "Data",
+            Self::Map => "Geospatial",
         }
     }
 }

@@ -18,6 +18,7 @@ use crate::{
         row_layout::RowCursor,
     },
     layout::{ComputedCol, Span, resolve_active_breakpoint},
+    map::{Map, Projector},
     render::{Backend, EguiBackend},
 };
 
@@ -578,6 +579,33 @@ impl<'ui> UiRoot<'ui> {
         .inner
     }
 
+    /// Draws an interactive map and returns its egui response.
+    pub fn map(&mut self, map: impl Into<Map>) -> egui::Response {
+        let map = map.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.map(map));
+        }
+        self.sync_theme_mode();
+        self.ui.add(map)
+    }
+
+    /// Draws an interactive map and invokes `draw_overlay` on every UI pass.
+    ///
+    /// The callback receives the map UI, map response, and geographic projector. Draw with the
+    /// UI's painter and project geographic positions each pass so overlays follow pan and zoom.
+    pub fn map_with_overlay(
+        &mut self,
+        map: impl Into<Map>,
+        draw_overlay: impl FnMut(&mut egui::Ui, &egui::Response, &Projector),
+    ) -> egui::Response {
+        let map = map.into();
+        if self.in_row() {
+            return self.loose_child(|ui| ui.map_with_overlay(map, draw_overlay));
+        }
+        self.sync_theme_mode();
+        map.show_with_overlay(&mut *self.ui, draw_overlay)
+    }
+
     pub fn time_series_plot(
         &mut self,
         plot: impl Into<TimeSeriesPlotProps>,
@@ -951,9 +979,15 @@ fn container_body<R>(
     let container_width = state
         .backend
         .resolve_container_width(&props, available_width);
+    let container_height = if props.fill_height {
+        ui.available_height().max(0.0)
+    } else {
+        0.0
+    };
 
     let horizontal_padding = props.padding.gutter_x();
     let vertical_padding = props.padding.gutter_y();
+    let content_height = (container_height - 2.0 * vertical_padding).max(0.0);
 
     ui.horizontal_top(|row_ui| {
         if !props.fluid {
@@ -965,7 +999,7 @@ fn container_body<R>(
 
         row_ui
             .allocate_ui_with_layout(
-                egui::vec2(container_width, 0.0),
+                egui::vec2(container_width, container_height),
                 egui::Layout::top_down(egui::Align::Min),
                 |container_ui| {
                     if vertical_padding > 0.0 {
@@ -982,7 +1016,7 @@ fn container_body<R>(
                                 (container_width - horizontal_padding * 2.0).max(0.0);
                             let inner = padding_ui
                                 .allocate_ui_with_layout(
-                                    egui::vec2(content_width, 0.0),
+                                    egui::vec2(content_width, content_height),
                                     egui::Layout::top_down(egui::Align::Min),
                                     |content_ui| f(&mut UiRoot::new(content_ui, state)),
                                 )

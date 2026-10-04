@@ -98,9 +98,8 @@ checkout_add_exec(
     command = "cargo-binstall",
     args = ["--no-confirm", "wasm-pack"],
     deps = [
-        ":rust_toolchain",
         cargo_binstall1,
-    ],
+    ] if cargo_binstall1 else [],
 )
 
 checkout_add_env_vars(

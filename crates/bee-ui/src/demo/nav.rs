@@ -63,4 +63,5 @@ define_view_handlers! {
     ProgressSpinners => set_view_progress_spinners,
     Tables => set_view_tables,
     Plots => set_view_plots,
+    Map => set_view_map,
 }

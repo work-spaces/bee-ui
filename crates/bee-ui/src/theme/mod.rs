@@ -1,4 +1,3 @@
-pub mod bootstrap_inventory;
 pub mod bootstrap_tokens;
 pub mod dark;
 pub mod fonts;

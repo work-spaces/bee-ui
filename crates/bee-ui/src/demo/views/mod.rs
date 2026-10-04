@@ -11,6 +11,7 @@ mod form;
 mod grid_row_col;
 mod groups;
 mod labels;
+mod map;
 mod overview;
 mod plots;
 mod progress_spinners;
@@ -62,5 +63,6 @@ pub(super) fn render_demo_view(
         DemoView::ProgressSpinners => progress_spinners::render_view_progress_spinners(ui),
         DemoView::Tables => tables::render_view_tables(ui),
         DemoView::Plots => plots::render_view_plots(ui),
+        DemoView::Map => map::render_view_map(ui),
     }
 }

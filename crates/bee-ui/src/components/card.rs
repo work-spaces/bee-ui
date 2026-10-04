@@ -4,6 +4,7 @@ use crate::core::{Span, Variant};
 pub struct CardProps {
     pub variant: Variant,
     pub outlined: bool,
+    pub fill_height: bool,
     pub header: Option<Span>,
     pub footer: Option<Span>,
 }
@@ -52,6 +53,11 @@ impl CardProps {
     pub fn has_footer(&self) -> bool {
         self.footer.is_some()
     }
+
+    pub fn fill_height(mut self) -> Self {
+        self.fill_height = true;
+        self
+    }
 }
 
 impl Default for CardProps {
@@ -59,6 +65,7 @@ impl Default for CardProps {
         Self {
             variant: Variant::Primary,
             outlined: false,
+            fill_height: false,
             header: None,
             footer: None,
         }
@@ -69,6 +76,7 @@ impl Default for CardProps {
 pub struct Card {
     pub variant: Variant,
     pub outlined: bool,
+    pub fill_height: bool,
     pub header: Option<Span>,
     pub footer: Option<Span>,
 }
@@ -110,6 +118,11 @@ impl Card {
         self.header(title)
     }
 
+    pub fn fill_height(mut self) -> Self {
+        self.fill_height = true;
+        self
+    }
+
     pub fn props(self) -> CardProps {
         self.into()
     }
@@ -120,6 +133,7 @@ impl Default for Card {
         Self {
             variant: Variant::Primary,
             outlined: false,
+            fill_height: false,
             header: None,
             footer: None,
         }
@@ -131,6 +145,7 @@ impl From<Card> for CardProps {
         Self {
             variant: value.variant,
             outlined: value.outlined,
+            fill_height: value.fill_height,
             header: value.header,
             footer: value.footer,
         }
@@ -142,6 +157,7 @@ impl From<CardProps> for Card {
         Self {
             variant: value.variant,
             outlined: value.outlined,
+            fill_height: value.fill_height,
             header: value.header,
             footer: value.footer,
         }
@@ -157,11 +173,13 @@ mod tests {
         let props = Card::with_title("Status")
             .footer("Updated just now")
             .outline()
+            .fill_height()
             .props();
 
         assert_eq!(props.header, Some(Span::from("Status")));
         assert_eq!(props.footer, Some(Span::from("Updated just now")));
         assert!(props.outlined);
+        assert!(props.fill_height);
         assert!(props.has_header());
         assert!(props.has_footer());
     }
