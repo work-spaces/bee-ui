@@ -7,6 +7,7 @@ use crate::prelude::*;
 
 use super::shared;
 
+const SCATTER_PLOT_VIEWPORT_ID: &str = "runnerd_bs.demo.plots.scatter.viewport";
 const PHASE_TWO_PLOT_VIEWPORT_ID: &str = "runnerd_bs.demo.plots.phase_two.viewport";
 const PHASE_THREE_PLOT_VIEWPORT_ID: &str = "runnerd_bs.demo.plots.phase_three.viewport";
 const PHASE_FOUR_PLOT_VIEWPORT_ID: &str = "runnerd_bs.demo.plots.phase_four.viewport";
@@ -31,6 +32,40 @@ pub(super) fn render_view_plots(ui: &mut UiRoot<'_>) {
             "PlotArea and ChartCard visualize runnerd SLO trends: latency, error rate, and throughput across recent minutes.",
         ));
     });
+
+    ui.card(
+        Card::new()
+            .title("Scatter plot — correlated measurements")
+            .outline(),
+        |ui| {
+            ui.text(Text::new(
+                "Each independent X/Y measurement carries its own marker shape, size, and color.",
+            ));
+
+            ui.raw(|egui_ui| {
+                let viewport_id = egui::Id::new(SCATTER_PLOT_VIEWPORT_ID);
+                let mut viewport = egui_ui
+                    .ctx()
+                    .data_mut(|data| data.get_temp::<ViewportState>(viewport_id))
+                    .unwrap_or_default();
+                let dataset = scatter_demo_dataset();
+                let props = ScatterPlotProps::new("runnerd_bs_demo_scatter_plot")
+                    .title("Sensor response by sample")
+                    .axis_labels("input", "response")
+                    .height(260.0)
+                    .legend(true);
+
+                ScatterPlot::show_with_viewport(egui_ui, &props, dataset, &mut viewport);
+                egui_ui.push_id("scatter_control_panel", |scoped_ui| {
+                    ScatterControlPanel::show(scoped_ui, &mut viewport, dataset);
+                });
+
+                egui_ui
+                    .ctx()
+                    .data_mut(|data| data.insert_temp(viewport_id, viewport));
+            });
+        },
+    );
 
     ui.card(
         Card::new()
@@ -371,6 +406,54 @@ fn line_for_series(series: shared::MetricSeries) -> egui_plot::Line<'static> {
     };
 
     egui_plot::Line::new(series.label, points).color(color)
+}
+
+fn scatter_demo_dataset() -> &'static ScatterDataset {
+    static SCATTER_DEMO_DATASET: OnceLock<ScatterDataset> = OnceLock::new();
+
+    SCATTER_DEMO_DATASET.get_or_init(|| {
+        let measurements = (0..48)
+            .map(|index| {
+                let x = f64::from(index) / 6.0;
+                let variation =
+                    (f64::from(index) * 1.7).sin() * 1.4 + (f64::from(index) * 0.37).cos() * 0.7;
+                let (shape, color) = match index % 3 {
+                    0 => (ScatterShape::Circle, egui::Color32::from_rgb(80, 120, 255)),
+                    1 => (ScatterShape::Square, egui::Color32::from_rgb(40, 180, 99)),
+                    _ => (ScatterShape::Diamond, egui::Color32::from_rgb(220, 53, 69)),
+                };
+                ScatterPoint::new(x, 2.1 * x + variation + 3.0)
+                    .shape(shape)
+                    .size(3.0 + (index % 4) as f32)
+                    .color(color)
+            })
+            .collect();
+        let control = (0..24)
+            .map(|index| {
+                let x = f64::from(index) / 3.0;
+                let variation = (f64::from(index) * 1.2).sin() * 1.1;
+                ScatterPoint::new(x, 1.5 * x + variation + 1.0)
+                    .shape(ScatterShape::Cross)
+                    .size(4.0)
+                    .color(egui::Color32::from_rgb(13, 202, 240))
+            })
+            .collect();
+
+        ScatterDataset::new(vec![
+            ScatterSeries::new("scatter.measurements", "Measurements").with_points(measurements),
+            ScatterSeries::new("scatter.control", "Control group").with_points(control),
+            ScatterSeries::new("scatter.outlier", "Outliers").with_points(vec![
+                ScatterPoint::new(2.0, 20.0)
+                    .shape(ScatterShape::Plus)
+                    .size(7.0)
+                    .color(egui::Color32::from_rgb(255, 193, 7)),
+                ScatterPoint::new(6.8, 4.0)
+                    .shape(ScatterShape::Diamond)
+                    .size(6.0)
+                    .color(egui::Color32::from_rgb(255, 193, 7)),
+            ]),
+        ])
+    })
 }
 
 fn phase_two_dataset() -> TimeSeriesDataset {

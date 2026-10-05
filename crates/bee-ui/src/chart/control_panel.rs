@@ -17,6 +17,11 @@ const Y_MODE_OPTIONS: &[(AxisZoomMode, &str)] = &[
     (AxisZoomMode::FitAll, "All "),
     (AxisZoomMode::Manual, "Free"),
 ];
+const SCATTER_MODE_OPTIONS: &[(AxisZoomMode, &str)] = &[
+    (AxisZoomMode::FitVisible, "Fit"),
+    (AxisZoomMode::FitAll, "All"),
+    (AxisZoomMode::Manual, "Free"),
+];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlotControlPanelProps {
@@ -42,9 +47,175 @@ pub struct PlotControlPanelResponse {
     pub download_clicked: bool,
 }
 
-pub struct PlotControlPanel;
+pub struct TimeSeriesControlPanel;
 
-impl PlotControlPanel {
+pub struct ScatterControlPanel;
+
+impl ScatterControlPanel {
+    pub fn show(
+        ui: &mut egui::Ui,
+        viewport: &mut ViewportState,
+        dataset: &super::ScatterDataset,
+    ) -> PlotControlPanelResponse {
+        let mut response = PlotControlPanelResponse::default();
+        let all_bounds = super::scatter::compute_scatter_data_bounds(dataset, false);
+        let (x_min, x_max, y_min, y_max) = viewport.normalized_bounds();
+        let visible_x_bounds =
+            super::scatter::compute_scatter_x_bounds(dataset, true, Some((y_min, y_max)));
+        let visible_y_bounds =
+            super::scatter::compute_scatter_y_bounds(dataset, true, Some((x_min, x_max)));
+        if viewport.x_mode != AxisZoomMode::Manual
+            && let Some(bounds) =
+                scatter_bounds_for_mode(viewport.x_mode, visible_x_bounds, all_bounds)
+        {
+            viewport.fit_x_to_data_bounds(
+                super::scatter::padded_scatter_bounds(bounds),
+                DEFAULT_MIN_MARGIN_X,
+            );
+        }
+        if viewport.y_mode != AxisZoomMode::Manual
+            && let Some(bounds) =
+                scatter_bounds_for_mode(viewport.y_mode, visible_y_bounds, all_bounds)
+        {
+            viewport.fit_y_to_data_bounds(super::scatter::padded_scatter_bounds(bounds));
+        }
+
+        let (x_min, x_max, y_min, y_max) = viewport.normalized_bounds();
+        let visible_x_bounds =
+            super::scatter::compute_scatter_x_bounds(dataset, true, Some((y_min, y_max)));
+        let visible_y_bounds =
+            super::scatter::compute_scatter_y_bounds(dataset, true, Some((x_min, x_max)));
+        let x_bounds = scatter_bounds_for_mode(viewport.x_mode, visible_x_bounds, all_bounds);
+        let y_bounds = scatter_bounds_for_mode(viewport.y_mode, visible_y_bounds, all_bounds);
+
+        let x_zoom_scale = x_bounds
+            .and_then(|bounds| axis_window_scale(bounds.x_min, bounds.x_max, DEFAULT_MIN_MARGIN_X));
+        let x_range_scale = x_bounds.and_then(|bounds| {
+            axis_position_scale(
+                bounds.x_min,
+                bounds.x_max,
+                viewport.x_window_size,
+                DEFAULT_MIN_MARGIN_X,
+            )
+        });
+        let y_zoom_scale =
+            y_bounds.and_then(|bounds| axis_window_scale(bounds.y_min, bounds.y_max, 0.0));
+        let y_range_scale = y_bounds.and_then(|bounds| {
+            axis_position_scale(bounds.y_min, bounds.y_max, viewport.y_span(), 0.0)
+        });
+
+        let initial = ScatterControlValues {
+            x_mode_index: mode_index(SCATTER_MODE_OPTIONS, viewport.x_mode),
+            y_mode_index: mode_index(SCATTER_MODE_OPTIONS, viewport.y_mode),
+            x_zoom: x_zoom_scale.map_or(0.0, |scale| scale.normalize(viewport.x_window_size)),
+            x_range: x_range_scale.map_or(0.0, |scale| scale.normalize(viewport.x_min)),
+            y_zoom: y_zoom_scale.map_or(0.0, |scale| scale.normalize(viewport.y_span())),
+            y_range: y_range_scale.map_or(0.0, |scale| scale.normalize(viewport.y_min)),
+        };
+        let visibility_id = ui.next_auto_id().with("scatter_controls_visible");
+        let is_visible = ui
+            .ctx()
+            .data(|data| data.get_temp::<bool>(visibility_id))
+            .unwrap_or(true);
+        let view = ScatterPanelView {
+            is_visible,
+            x_mode_placeholder: mode_label(viewport.x_mode),
+            y_mode_placeholder: mode_label(viewport.y_mode),
+            x_mode_dropdown_id: ui.next_auto_id().with("scatter_x_mode_dropdown"),
+            y_mode_dropdown_id: ui.next_auto_id().with("scatter_y_mode_dropdown"),
+            x_zoom_enabled: x_zoom_scale.is_some(),
+            x_range_enabled: x_range_scale.is_some(),
+            y_zoom_enabled: y_zoom_scale.is_some(),
+            y_range_enabled: y_range_scale.is_some(),
+        };
+
+        let mut edited = initial;
+        let clicks = show_in_ui(ui, |root| build_scatter_panel(root, &mut edited, view));
+        if clicks.visibility_toggled {
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(visibility_id, !is_visible));
+            ui.ctx().request_repaint();
+        }
+
+        if edited.x_mode_index != initial.x_mode_index
+            && let Some(&(mode, _)) = SCATTER_MODE_OPTIONS.get(edited.x_mode_index)
+        {
+            viewport.x_mode = mode;
+            if mode == AxisZoomMode::Manual {
+                viewport.follow = FollowMode::Free;
+            } else if let Some(bounds) = scatter_bounds_for_mode(mode, visible_x_bounds, all_bounds)
+            {
+                viewport.fit_x_to_data_bounds(
+                    super::scatter::padded_scatter_bounds(bounds),
+                    DEFAULT_MIN_MARGIN_X,
+                );
+            }
+            response.changed = true;
+        }
+
+        if edited.y_mode_index != initial.y_mode_index
+            && let Some(&(mode, _)) = SCATTER_MODE_OPTIONS.get(edited.y_mode_index)
+        {
+            viewport.y_mode = mode;
+            if mode != AxisZoomMode::Manual
+                && let Some(bounds) = scatter_bounds_for_mode(mode, visible_y_bounds, all_bounds)
+            {
+                viewport.fit_y_to_data_bounds(super::scatter::padded_scatter_bounds(bounds));
+            }
+            response.changed = true;
+        }
+
+        if edited.x_zoom != initial.x_zoom
+            && let (Some(scale), Some(bounds)) = (x_zoom_scale, x_bounds)
+        {
+            viewport.x_mode = AxisZoomMode::Manual;
+            viewport.follow = FollowMode::Free;
+            response.changed |= viewport.set_x_window_size_manual(
+                scale.value_at(edited.x_zoom),
+                bounds.x_min,
+                bounds.x_max,
+                DEFAULT_MIN_MARGIN_X,
+            );
+            response.changed = true;
+        }
+
+        if edited.x_range != initial.x_range
+            && let (Some(scale), Some(bounds)) = (x_range_scale, x_bounds)
+        {
+            viewport.x_mode = AxisZoomMode::Manual;
+            viewport.follow = FollowMode::Free;
+            response.changed |= viewport.set_x_start_manual(
+                scale.value_at(edited.x_range),
+                bounds.x_min,
+                bounds.x_max,
+                DEFAULT_MIN_MARGIN_X,
+            );
+            response.changed = true;
+        }
+
+        if edited.y_zoom != initial.y_zoom
+            && let Some(scale) = y_zoom_scale
+        {
+            let window_size = scale.value_at(edited.y_zoom);
+            let center = viewport.y_min * 0.5 + viewport.y_max * 0.5;
+            viewport.set_manual_y_bounds(center - window_size * 0.5, center + window_size * 0.5);
+            response.changed = true;
+        }
+
+        if edited.y_range != initial.y_range
+            && let Some(scale) = y_range_scale
+        {
+            let y_min = scale.value_at(edited.y_range);
+            let y_span = viewport.y_span();
+            viewport.set_manual_y_bounds(y_min, y_min + y_span);
+            response.changed = true;
+        }
+
+        response
+    }
+}
+
+impl TimeSeriesControlPanel {
     pub fn show(
         ui: &mut egui::Ui,
         viewport: &mut ViewportState,
@@ -141,6 +312,29 @@ impl PlotControlPanel {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ScatterControlValues {
+    x_mode_index: usize,
+    y_mode_index: usize,
+    x_zoom: f32,
+    x_range: f32,
+    y_zoom: f32,
+    y_range: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ScatterPanelView {
+    is_visible: bool,
+    x_mode_placeholder: &'static str,
+    y_mode_placeholder: &'static str,
+    x_mode_dropdown_id: egui::Id,
+    y_mode_dropdown_id: egui::Id,
+    x_zoom_enabled: bool,
+    x_range_enabled: bool,
+    y_zoom_enabled: bool,
+    y_range_enabled: bool,
+}
+
 /// Controlled values bound to the panel's inputs. The panel diffs these against their initial
 /// snapshot after rendering to detect user edits.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -173,7 +367,118 @@ struct PanelClicks {
     download: bool,
 }
 
-/// Draws the panel, writing input edits into `values` and returning button clicks.
+fn build_scatter_panel(
+    root: &mut UiRoot<'_>,
+    values: &mut ScatterControlValues,
+    view: ScatterPanelView,
+) -> PanelClicks {
+    let spacing = bootstrap_tokens::spacing();
+    let row = Row::new().gutter_x(spacing.md).gutter_y(spacing.sm);
+    let mut clicks = PanelClicks::default();
+
+    root.container(Container::fluid(), |root| {
+        root.row(row, |root| {
+            root.col(Col::new().xs(2).md(2), |root| {
+                let button_icon = if view.is_visible {
+                    prelude::SvgIcon::EyeSlash
+                } else {
+                    prelude::SvgIcon::List
+                };
+                clicks.visibility_toggled = root
+                    .button(
+                        Button::new("")
+                            .icon(button_icon)
+                            .variant(prelude::Variant::Primary),
+                    )
+                    .clicked();
+            });
+
+            if view.is_visible {
+                root.col(Col::new().xs(5).md(5), |root| {
+                    if let Some(selected) = root
+                        .dropdown(
+                            DisclosureState::uncontrolled(view.x_mode_dropdown_id, false),
+                            mode_dropdown(
+                                SCATTER_MODE_OPTIONS,
+                                values.x_mode_index,
+                                view.x_mode_placeholder,
+                            ),
+                        )
+                        .clicked_index()
+                    {
+                        values.x_mode_index = selected;
+                    }
+                });
+                root.col(Col::new().xs(5).md(5), |root| {
+                    if let Some(selected) = root
+                        .dropdown(
+                            DisclosureState::uncontrolled(view.y_mode_dropdown_id, false),
+                            mode_dropdown(
+                                SCATTER_MODE_OPTIONS,
+                                values.y_mode_index,
+                                view.y_mode_placeholder,
+                            ),
+                        )
+                        .clicked_index()
+                    {
+                        values.y_mode_index = selected;
+                    }
+                });
+            }
+        });
+
+        if view.is_visible {
+            root.row(row, |root| {
+                root.col(Col::new().xs(2).md(2), |root| {
+                    root.raw(|ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            prelude::SpanIcon::new(prelude::SvgIcon::Arrows)
+                                .render_with_tint(ui, None);
+                        });
+                    });
+                });
+                root.col(Col::new().xs(5).md(5), |root| {
+                    root.form_range(
+                        &mut values.x_zoom,
+                        normalized_range(view.x_zoom_enabled).variant(prelude::Variant::Primary),
+                    );
+                });
+                root.col(Col::new().xs(5).md(5), |root| {
+                    root.form_range(
+                        &mut values.y_zoom,
+                        normalized_range(view.y_zoom_enabled).variant(prelude::Variant::Primary),
+                    );
+                });
+            });
+
+            root.row(row, |root| {
+                root.col(Col::new().xs(2).md(2), |root| {
+                    root.raw(|ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            prelude::SpanIcon::new(prelude::SvgIcon::InputCursor)
+                                .render_with_tint(ui, None);
+                        });
+                    });
+                });
+                root.col(Col::new().xs(5).md(5), |root| {
+                    root.form_range(
+                        &mut values.x_range,
+                        normalized_range(view.x_range_enabled).variant(prelude::Variant::Secondary),
+                    );
+                });
+                root.col(Col::new().xs(5).md(5), |root| {
+                    root.form_range(
+                        &mut values.y_range,
+                        normalized_range(view.y_range_enabled).variant(prelude::Variant::Secondary),
+                    );
+                });
+            });
+        }
+    });
+    clicks
+}
+
+/// Draws the time-series panel, writing input edits into `values` and returning button clicks.
 fn build_panel(root: &mut UiRoot<'_>, values: &mut ControlValues, view: PanelView) -> PanelClicks {
     let spacing = bootstrap_tokens::spacing();
     let row = Row::new().gutter_x(spacing.md).gutter_y(spacing.sm);
@@ -291,12 +596,28 @@ fn mode_label(mode: AxisZoomMode) -> &'static str {
     }
 }
 
+fn scatter_bounds_for_mode(
+    mode: AxisZoomMode,
+    visible_bounds: Option<DataBounds>,
+    all_bounds: Option<DataBounds>,
+) -> Option<DataBounds> {
+    match mode {
+        AxisZoomMode::FitVisible => visible_bounds.or(all_bounds),
+        AxisZoomMode::FitAll => all_bounds,
+        AxisZoomMode::Manual => visible_bounds.or(all_bounds),
+    }
+}
+
 fn x_window_scale(bounds: DataBounds, min_margin_x: f64) -> Option<SliderScale> {
-    let data_span = (bounds.x_max - bounds.x_min).abs();
+    axis_window_scale(bounds.x_min, bounds.x_max, min_margin_x)
+}
+
+fn axis_window_scale(data_min: f64, data_max: f64, min_margin: f64) -> Option<SliderScale> {
+    let data_span = (data_max - data_min).abs();
     let (min_window, max_window) = if data_span > 0.0 {
         (
             (data_span / 500.0).max(0.0001),
-            data_span * 1.1 + min_margin_x * 2.0,
+            data_span * 1.1 + min_margin * 2.0,
         )
     } else {
         (0.0001, 10.0)
@@ -310,15 +631,22 @@ fn x_position_scale(
     viewport: &ViewportState,
     min_margin_x: f64,
 ) -> Option<SliderScale> {
-    let limits = compute_x_navigation_limits(
+    axis_position_scale(
         bounds.x_min,
         bounds.x_max,
         viewport.x_window_size,
         min_margin_x,
-    )?;
-    // The right end of the slider is the pinned-to-latest window (right edge at the newest
-    // sample, matching `ViewportState::pin_x_to_latest`), so "fully right" means follow.
-    let max_start = (bounds.x_max - viewport.x_window_size).max(limits.min_x);
+    )
+}
+
+fn axis_position_scale(
+    data_min: f64,
+    data_max: f64,
+    window_size: f64,
+    min_margin: f64,
+) -> Option<SliderScale> {
+    let limits = compute_x_navigation_limits(data_min, data_max, window_size, min_margin)?;
+    let max_start = (data_max - window_size).max(limits.min_x);
 
     SliderScale::new(limits.min_x, max_start, false)
 }
@@ -426,6 +754,20 @@ mod tests {
 
         let scale = SliderScale::new(0.0, 10.0, true).expect("non-empty domain");
         assert!(!scale.logarithmic);
+    }
+
+    #[test]
+    fn axis_scales_map_y_zoom_and_range_values() {
+        let zoom_scale = axis_window_scale(-10.0, 10.0, 0.0).expect("non-empty Y domain");
+        let zoom = 4.0;
+        let zoom_round_trip = zoom_scale.value_at(zoom_scale.normalize(zoom));
+        assert!((zoom_round_trip - zoom).abs() < 1e-6);
+
+        let range_scale =
+            axis_position_scale(-10.0, 10.0, zoom, 0.0).expect("non-empty Y range domain");
+        let range = -2.0;
+        let range_round_trip = range_scale.value_at(range_scale.normalize(range));
+        assert!((range_round_trip - range).abs() < 1e-6);
     }
 
     #[test]

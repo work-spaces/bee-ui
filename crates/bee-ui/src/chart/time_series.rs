@@ -1,6 +1,6 @@
 use super::{
-    AxisZoomMode, DEFAULT_DECIMATION_POINTS_PER_PIXEL, FollowMode, PlotArea, PlotControlPanel,
-    PlotControlPanelProps, TimeSeriesDataset, ViewportState, compute_data_bounds,
+    AxisZoomMode, DEFAULT_DECIMATION_POINTS_PER_PIXEL, FollowMode, PlotArea, PlotControlPanelProps,
+    TimeSeriesControlPanel, TimeSeriesDataset, ViewportState, compute_data_bounds,
     compute_visible_data_bounds, compute_visible_window_bounds, prepare_line_points,
     viewport_point_budget,
 };
@@ -136,7 +136,6 @@ impl TimeSeriesPlot {
             .plot
             .build_plot(available_width)
             .allow_zoom(axis_manual)
-            .allow_scroll(axis_manual)
             .allow_drag(axis_manual)
             .allow_boxed_zoom(false)
             .allow_double_click_reset(false)
@@ -275,7 +274,7 @@ impl TimeSeriesPlot {
             .push_id(
                 ("time_series_control_panel", props.plot.id.as_str()),
                 |scoped_ui| {
-                    PlotControlPanel::show(scoped_ui, viewport, dataset, &control_panel_props)
+                    TimeSeriesControlPanel::show(scoped_ui, viewport, dataset, &control_panel_props)
                 },
             )
             .inner;

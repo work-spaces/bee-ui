@@ -139,17 +139,17 @@ impl RootState {
 /// `card`, ...) run their closure inside the matching egui scope and return its value.
 pub struct UiRoot<'ui> {
     ui: &'ui mut egui::Ui,
-    state: &'ui mut RootState,
+    root_state: &'ui mut RootState,
     /// Set while this `UiRoot` is the body of a `row`: every component then takes the next
     /// column slot instead of drawing into `ui` directly.
     row: Option<&'ui mut RowCursor>,
 }
 
 impl<'ui> UiRoot<'ui> {
-    pub(crate) fn new(ui: &'ui mut egui::Ui, state: &'ui mut RootState) -> Self {
+    pub(crate) fn new(ui: &'ui mut egui::Ui, root_state: &'ui mut RootState) -> Self {
         Self {
             ui,
-            state,
+            root_state,
             row: None,
         }
     }
@@ -159,37 +159,37 @@ impl<'ui> UiRoot<'ui> {
     }
 
     pub fn set_strict_mode(&mut self, enabled: bool) -> &mut Self {
-        self.state.strict_mode = enabled;
+        self.root_state.strict_mode = enabled;
         self
     }
 
     pub const fn strict_mode_enabled(&self) -> bool {
-        self.state.strict_mode
+        self.root_state.strict_mode
     }
 
     pub fn set_strict_mode_error_reporter(
         &mut self,
         reporter: impl FnMut(&UiValidationError) + 'static,
     ) -> &mut Self {
-        self.state.strict_mode_error_reporter = Some(Box::new(reporter));
+        self.root_state.strict_mode_error_reporter = Some(Box::new(reporter));
         self
     }
 
     pub fn clear_strict_mode_error_reporter(&mut self) -> &mut Self {
-        self.state.strict_mode_error_reporter = None;
+        self.root_state.strict_mode_error_reporter = None;
         self
     }
 
     pub fn strict_mode_errors(&self) -> &[UiValidationError] {
-        &self.state.strict_mode_errors
+        &self.root_state.strict_mode_errors
     }
 
     pub fn take_strict_mode_errors(&mut self) -> Vec<UiValidationError> {
-        std::mem::take(&mut self.state.strict_mode_errors)
+        std::mem::take(&mut self.root_state.strict_mode_errors)
     }
 
     fn sync_theme_mode(&mut self) {
-        self.state.backend.sync_mode_from_ui(self.ui);
+        self.root_state.backend.sync_mode_from_ui(self.ui);
     }
 
     const fn in_row(&self) -> bool {
@@ -208,7 +208,7 @@ impl<'ui> UiRoot<'ui> {
             return f(self);
         };
         let row_ui = &mut *self.ui;
-        let state = &mut *self.state;
+        let state = &mut *self.root_state;
         let row_props = *cursor.props();
 
         let (line_index, computed) = cursor.next_placement(&props);
@@ -255,9 +255,11 @@ impl<'ui> UiRoot<'ui> {
         self.sync_theme_mode();
 
         let open = disclosure.current(self.ui.ctx());
-        self.state.backend.begin_disclosure_scope(self.ui, open);
+        self.root_state
+            .backend
+            .begin_disclosure_scope(self.ui, open);
         let inner = if open { Some(f(self)) } else { None };
-        self.state.backend.end_disclosure_scope(self.ui, open);
+        self.root_state.backend.end_disclosure_scope(self.ui, open);
         inner
     }
 
@@ -276,11 +278,11 @@ impl<'ui> UiRoot<'ui> {
         self.sync_theme_mode();
 
         let active_index = active_index_state.current(self.ui.ctx());
-        self.state
+        self.root_state
             .backend
             .begin_active_index_scope(self.ui, active_index);
         let inner = f(self);
-        self.state
+        self.root_state
             .backend
             .end_active_index_scope(self.ui, active_index);
         inner
@@ -307,7 +309,7 @@ impl<'ui> UiRoot<'ui> {
         let mut style = self.ui.style().as_ref().clone();
         style_override(&mut style);
 
-        let state = &mut *self.state;
+        let state = &mut *self.root_state;
         self.ui
             .scope(|scope_ui| {
                 *scope_ui.style_mut() = style;
@@ -329,7 +331,7 @@ impl<'ui> UiRoot<'ui> {
         let mut themed_style = self.ui.style().as_ref().clone();
         themed_style.visuals = theme.default_visuals();
 
-        let state = &mut *self.state;
+        let state = &mut *self.root_state;
         self.ui
             .scope(|scope_ui| {
                 *scope_ui.style_mut() = themed_style;
@@ -350,7 +352,7 @@ impl<'ui> UiRoot<'ui> {
         self.sync_theme_mode();
 
         let ui = &mut *self.ui;
-        let state = &mut *self.state;
+        let state = &mut *self.root_state;
         state.backend.begin_container(ui, &props);
 
         let scroll_area = match props.scroll {
@@ -400,7 +402,7 @@ impl<'ui> UiRoot<'ui> {
         };
         let available = self.ui.available_rect_before_wrap();
         let breakpoint =
-            resolve_active_breakpoint(available.width(), self.state.backend.breakpoints());
+            resolve_active_breakpoint(available.width(), self.root_state.backend.breakpoints());
         let line_gap = self.ui.spacing().item_spacing.y + props.spacing().gutter_y();
         let mut cursor = RowCursor::new(self.ui.ctx(), id, props, breakpoint, available, line_gap);
 
@@ -412,10 +414,10 @@ impl<'ui> UiRoot<'ui> {
         }
         let mut row_ui = self.ui.new_child(builder);
 
-        let state = &mut *self.state;
+        let state = &mut *self.root_state;
         let inner = f(&mut UiRoot {
             ui: &mut row_ui,
-            state: &mut *state,
+            root_state: &mut *state,
             row: Some(&mut cursor),
         });
 
@@ -434,14 +436,14 @@ impl<'ui> UiRoot<'ui> {
     /// width.
     pub fn col<R>(&mut self, col: impl Into<ColProps>, f: impl FnOnce(&mut UiRoot<'_>) -> R) -> R {
         let props = col.into();
-        self.state.report_col_validation_issues(&props);
+        self.root_state.report_col_validation_issues(&props);
         if self.in_row() {
             return self.row_col(props, f);
         }
         self.sync_theme_mode();
 
         let ui = &mut *self.ui;
-        let state = &mut *self.state;
+        let state = &mut *self.root_state;
         let computed = ComputedCol {
             source_index: 0,
             span: Span::Auto,
@@ -474,7 +476,7 @@ impl<'ui> UiRoot<'ui> {
         }
         self.sync_theme_mode();
 
-        let state = &mut *self.state;
+        let state = &mut *self.root_state;
         let body = |stack_ui: &mut egui::Ui| {
             stack_ui.spacing_mut().item_spacing.x = props.resolved_gap();
             f(&mut UiRoot::new(stack_ui, state))
@@ -498,7 +500,7 @@ impl<'ui> UiRoot<'ui> {
         }
         self.sync_theme_mode();
 
-        let state = &mut *self.state;
+        let state = &mut *self.root_state;
         // `render_card` keeps the backend borrowed while the body runs, so components inside the
         // card draw with a fresh backend until the outer one is put back.
         let mut backend = std::mem::take(&mut state.backend);
@@ -549,7 +551,7 @@ impl<'ui> UiRoot<'ui> {
         self.sync_theme_mode();
 
         let ui = &mut *self.ui;
-        let style = self.state.backend.card_style(&CardProps::new());
+        let style = self.root_state.backend.card_style(&CardProps::new());
 
         if let Some(title) = &props.title {
             let bold_face = crate::theme::fonts::FontFace::PropoBold;
@@ -643,7 +645,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.badge(props));
         }
         self.sync_theme_mode();
-        self.state.backend.render_badge(self.ui, &props);
+        self.root_state.backend.render_badge(self.ui, &props);
     }
 
     pub fn label(&mut self, label: impl Into<LabelProps>) {
@@ -652,7 +654,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.label(props));
         }
         self.sync_theme_mode();
-        self.state.backend.render_label(self.ui, &props);
+        self.root_state.backend.render_label(self.ui, &props);
     }
 
     pub fn text(&mut self, text: impl Into<TextProps>) {
@@ -661,7 +663,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.text(props));
         }
         self.sync_theme_mode();
-        self.state.backend.render_text(self.ui, &props);
+        self.root_state.backend.render_text(self.ui, &props);
     }
 
     /// Draws a button and returns its `egui::Response`, so `.clicked()`, `.hovered()`,
@@ -671,7 +673,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.button(button));
         }
         self.sync_theme_mode();
-        let response = self.state.backend.render_button(self.ui, &button);
+        let response = self.root_state.backend.render_button(self.ui, &button);
         if response.clicked()
             && let Some(on_click) = button.on_click
         {
@@ -686,7 +688,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.alert(props));
         }
         self.sync_theme_mode();
-        self.state.backend.render_alert(self.ui, &props);
+        self.root_state.backend.render_alert(self.ui, &props);
     }
 
     pub fn progress(&mut self, progress: impl Into<ProgressProps>) {
@@ -695,7 +697,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.progress(props));
         }
         self.sync_theme_mode();
-        self.state.backend.render_progress(self.ui, &props);
+        self.root_state.backend.render_progress(self.ui, &props);
     }
 
     /// Draws a table and reports which row, if any, was clicked.
@@ -706,8 +708,8 @@ impl<'ui> UiRoot<'ui> {
         }
         self.sync_theme_mode();
 
-        let table_seq = self.state.next_table_render_seq();
-        let backend = &mut self.state.backend;
+        let table_seq = self.root_state.next_table_render_seq();
+        let backend = &mut self.root_state.backend;
         let clicked = self
             .ui
             .push_id(("semantic_table", table_seq), |table_ui| {
@@ -727,7 +729,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.close_button(props));
         }
         self.sync_theme_mode();
-        let response = self.state.backend.render_close_button(self.ui, &props);
+        let response = self.root_state.backend.render_close_button(self.ui, &props);
         if response.clicked()
             && let Some(on_click) = props.on_click
         {
@@ -743,7 +745,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.pagination(props));
         }
         self.sync_theme_mode();
-        let clicked = self.state.backend.render_pagination(self.ui, &props);
+        let clicked = self.root_state.backend.render_pagination(self.ui, &props);
         dispatch_item_clicks(self.ui.ctx(), &clicked, |index| {
             props.items.get(index).and_then(|item| item.on_click)
         })
@@ -755,7 +757,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.spinner(props));
         }
         self.sync_theme_mode();
-        self.state.backend.render_spinner(self.ui, &props);
+        self.root_state.backend.render_spinner(self.ui, &props);
     }
 
     pub fn placeholder(&mut self, placeholder: impl Into<PlaceholderProps>) {
@@ -764,7 +766,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.placeholder(props));
         }
         self.sync_theme_mode();
-        self.state.backend.render_placeholder(self.ui, &props);
+        self.root_state.backend.render_placeholder(self.ui, &props);
     }
 
     /// Draws a button group and reports which button, if any, was clicked.
@@ -774,7 +776,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.button_group(props));
         }
         self.sync_theme_mode();
-        let clicked = self.state.backend.render_button_group(self.ui, &props);
+        let clicked = self.root_state.backend.render_button_group(self.ui, &props);
         dispatch_item_clicks(self.ui.ctx(), &clicked, |index| {
             props.buttons.get(index).and_then(|button| button.on_click)
         })
@@ -787,7 +789,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.list_group(props));
         }
         self.sync_theme_mode();
-        let clicked = self.state.backend.render_list_group(self.ui, &props);
+        let clicked = self.root_state.backend.render_list_group(self.ui, &props);
         dispatch_item_clicks(self.ui.ctx(), &clicked, |index| {
             props.items.get(index).and_then(|item| item.on_click)
         })
@@ -800,7 +802,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.nav(props));
         }
         self.sync_theme_mode();
-        let clicked = self.state.backend.render_nav(self.ui, &props);
+        let clicked = self.root_state.backend.render_nav(self.ui, &props);
         dispatch_item_clicks(self.ui.ctx(), &clicked, |index| {
             props.items.get(index).and_then(|item| item.on_click)
         })
@@ -813,7 +815,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.navbar(props));
         }
         self.sync_theme_mode();
-        let result = self.state.backend.render_navbar(self.ui, &props);
+        let result = self.root_state.backend.render_navbar(self.ui, &props);
 
         if result.brand_clicked
             && let Some(on_brand_click) = props.on_brand_click
@@ -842,7 +844,10 @@ impl<'ui> UiRoot<'ui> {
         self.sync_theme_mode();
 
         let open = disclosure.current(self.ui.ctx());
-        let result = self.state.backend.render_dropdown(self.ui, &props, open);
+        let result = self
+            .root_state
+            .backend
+            .render_dropdown(self.ui, &props, open);
 
         if result.toggle_clicked {
             disclosure.toggle(self.ui.ctx());
@@ -863,7 +868,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.form_label(props));
         }
         self.sync_theme_mode();
-        self.state.backend.render_form_label(self.ui, &props);
+        self.root_state.backend.render_form_label(self.ui, &props);
     }
 
     pub fn form_text(&mut self, form_text: impl Into<FormTextProps>) {
@@ -872,7 +877,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.form_text(props));
         }
         self.sync_theme_mode();
-        self.state.backend.render_form_text(self.ui, &props);
+        self.root_state.backend.render_form_text(self.ui, &props);
     }
 
     pub fn form_control(
@@ -886,7 +891,7 @@ impl<'ui> UiRoot<'ui> {
         }
         self.sync_theme_mode();
         let changed = self
-            .state
+            .root_state
             .backend
             .render_form_control(self.ui, value, &props);
         dispatch_change(self.ui.ctx(), changed, props.on_change)
@@ -903,7 +908,7 @@ impl<'ui> UiRoot<'ui> {
         }
         self.sync_theme_mode();
         let changed = self
-            .state
+            .root_state
             .backend
             .render_form_select(self.ui, selected_index, &props);
         dispatch_change(self.ui.ctx(), changed, props.on_change)
@@ -920,7 +925,7 @@ impl<'ui> UiRoot<'ui> {
         }
         self.sync_theme_mode();
         let changed = self
-            .state
+            .root_state
             .backend
             .render_form_check(self.ui, checked, &props);
         dispatch_change(self.ui.ctx(), changed, props.on_change)
@@ -936,7 +941,10 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.form_range(value, props));
         }
         self.sync_theme_mode();
-        let changed = self.state.backend.render_form_range(self.ui, value, &props);
+        let changed = self
+            .root_state
+            .backend
+            .render_form_range(self.ui, value, &props);
         dispatch_change(self.ui.ctx(), changed, props.on_change)
     }
 
@@ -951,7 +959,7 @@ impl<'ui> UiRoot<'ui> {
         }
         self.sync_theme_mode();
         let changed = self
-            .state
+            .root_state
             .backend
             .render_floating_label(self.ui, value, &props);
         dispatch_change(self.ui.ctx(), changed, props.on_change)
@@ -963,7 +971,7 @@ impl<'ui> UiRoot<'ui> {
             return self.loose_child(|ui| ui.validation_feedback(props));
         }
         self.sync_theme_mode();
-        self.state
+        self.root_state
             .backend
             .render_validation_feedback(self.ui, &props);
     }
@@ -971,12 +979,12 @@ impl<'ui> UiRoot<'ui> {
 
 fn container_body<R>(
     ui: &mut egui::Ui,
-    state: &mut RootState,
+    root_state: &mut RootState,
     props: ContainerProps,
     f: impl FnOnce(&mut UiRoot<'_>) -> R,
 ) -> R {
     let available_width = ui.available_width();
-    let container_width = state
+    let container_width = root_state
         .backend
         .resolve_container_width(&props, available_width);
     let container_height = if props.fill_height {
@@ -1018,7 +1026,7 @@ fn container_body<R>(
                                 .allocate_ui_with_layout(
                                     egui::vec2(content_width, content_height),
                                     egui::Layout::top_down(egui::Align::Min),
-                                    |content_ui| f(&mut UiRoot::new(content_ui, state)),
+                                    |content_ui| f(&mut UiRoot::new(content_ui, root_state)),
                                 )
                                 .inner;
 

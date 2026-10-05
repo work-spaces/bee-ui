@@ -72,7 +72,7 @@ impl PlotArea {
     }
 
     pub(crate) fn build_plot<'a>(&'a self, available_width: f32) -> egui_plot::Plot<'a> {
-        let mut plot = egui_plot::Plot::new(self.id.as_str());
+        let mut plot = egui_plot::Plot::new(self.id.as_str()).allow_scroll(false);
 
         if let Some(width) = self.width {
             plot = plot.width(normalize_non_negative(width));

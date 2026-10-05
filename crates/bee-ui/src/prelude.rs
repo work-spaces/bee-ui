@@ -1,9 +1,11 @@
 pub use crate::chart::{
     AxisZoomMode, ChartCard, DEFAULT_DECIMATION_POINTS_PER_PIXEL, FollowMode, GeneratorProfile,
-    MathGenerator, PlotArea, PlotControlPanel, PlotControlPanelProps, PlotControlPanelResponse,
-    PlotDataSource, PlotPoint, SeriesId, SharedPlotSource, SharedTimeSeriesDataset, TimeSeries,
-    TimeSeriesDataset, TimeSeriesPlot, TimeSeriesPlotProps, TimeSeriesPlotResponse, ViewportState,
-    downsample_min_max, prepare_line_points, select_visible_points, viewport_point_budget,
+    MathGenerator, PlotArea, PlotControlPanelProps, PlotControlPanelResponse, PlotDataSource,
+    PlotPoint, ScatterControlPanel, ScatterDataset, ScatterPlot, ScatterPlotProps,
+    ScatterPlotResponse, ScatterPoint, ScatterSeries, ScatterShape, SeriesId, SharedPlotSource,
+    SharedTimeSeriesDataset, TimeSeries, TimeSeriesControlPanel, TimeSeriesDataset, TimeSeriesPlot,
+    TimeSeriesPlotProps, TimeSeriesPlotResponse, ViewportState, downsample_min_max,
+    prepare_line_points, select_visible_points, viewport_point_budget,
 };
 pub use crate::components::{
     ActiveIndexState, Alert, AlertProps, Badge, BadgeProps, Button, ButtonGroup, ButtonGroupProps,

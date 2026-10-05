@@ -306,6 +306,6 @@ pub fn show_root_with_frame<R>(
 /// `UiRoot::raw`). Components draw into `ui` as they're called, so `f` can return whatever
 /// it read from their responses.
 pub fn show_in_ui<R>(ui: &mut egui::Ui, f: impl FnOnce(&mut UiRoot<'_>) -> R) -> R {
-    let mut state = RootState::default();
-    f(&mut UiRoot::new(ui, &mut state))
+    let mut root_state = RootState::default();
+    f(&mut UiRoot::new(ui, &mut root_state))
 }
