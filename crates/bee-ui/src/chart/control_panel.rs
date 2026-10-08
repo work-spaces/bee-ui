@@ -121,6 +121,7 @@ impl ScatterControlPanel {
             is_visible,
             x_mode_placeholder: mode_label(viewport.x_mode),
             y_mode_placeholder: mode_label(viewport.y_mode),
+            lock_aspect_ratio: viewport.lock_aspect_ratio,
             x_mode_dropdown_id: ui.next_auto_id().with("scatter_x_mode_dropdown"),
             y_mode_dropdown_id: ui.next_auto_id().with("scatter_y_mode_dropdown"),
             x_zoom_enabled: x_zoom_scale.is_some(),
@@ -136,19 +137,38 @@ impl ScatterControlPanel {
                 .data_mut(|data| data.insert_temp(visibility_id, !is_visible));
             ui.ctx().request_repaint();
         }
+        if clicks.aspect_ratio_toggled {
+            viewport.lock_aspect_ratio = !viewport.lock_aspect_ratio;
+            if viewport.lock_aspect_ratio {
+                viewport.x_mode = AxisZoomMode::Manual;
+                viewport.y_mode = AxisZoomMode::Manual;
+                viewport.follow = FollowMode::Free;
+            }
+            response.changed = true;
+        }
 
         if edited.x_mode_index != initial.x_mode_index
             && let Some(&(mode, _)) = SCATTER_MODE_OPTIONS.get(edited.x_mode_index)
         {
             viewport.x_mode = mode;
+            if viewport.lock_aspect_ratio {
+                viewport.y_mode = mode;
+            }
             if mode == AxisZoomMode::Manual {
                 viewport.follow = FollowMode::Free;
-            } else if let Some(bounds) = scatter_bounds_for_mode(mode, visible_x_bounds, all_bounds)
-            {
-                viewport.fit_x_to_data_bounds(
-                    super::scatter::padded_scatter_bounds(bounds),
-                    DEFAULT_MIN_MARGIN_X,
-                );
+            } else {
+                if let Some(bounds) = scatter_bounds_for_mode(mode, visible_x_bounds, all_bounds) {
+                    viewport.fit_x_to_data_bounds(
+                        super::scatter::padded_scatter_bounds(bounds),
+                        DEFAULT_MIN_MARGIN_X,
+                    );
+                }
+                if viewport.lock_aspect_ratio
+                    && let Some(bounds) =
+                        scatter_bounds_for_mode(mode, visible_y_bounds, all_bounds)
+                {
+                    viewport.fit_y_to_data_bounds(super::scatter::padded_scatter_bounds(bounds));
+                }
             }
             response.changed = true;
         }
@@ -157,10 +177,26 @@ impl ScatterControlPanel {
             && let Some(&(mode, _)) = SCATTER_MODE_OPTIONS.get(edited.y_mode_index)
         {
             viewport.y_mode = mode;
-            if mode != AxisZoomMode::Manual
-                && let Some(bounds) = scatter_bounds_for_mode(mode, visible_y_bounds, all_bounds)
-            {
-                viewport.fit_y_to_data_bounds(super::scatter::padded_scatter_bounds(bounds));
+            if viewport.lock_aspect_ratio {
+                viewport.x_mode = mode;
+            }
+            if mode == AxisZoomMode::Manual {
+                if viewport.lock_aspect_ratio {
+                    viewport.follow = FollowMode::Free;
+                }
+            } else {
+                if let Some(bounds) = scatter_bounds_for_mode(mode, visible_y_bounds, all_bounds) {
+                    viewport.fit_y_to_data_bounds(super::scatter::padded_scatter_bounds(bounds));
+                }
+                if viewport.lock_aspect_ratio
+                    && let Some(bounds) =
+                        scatter_bounds_for_mode(mode, visible_x_bounds, all_bounds)
+                {
+                    viewport.fit_x_to_data_bounds(
+                        super::scatter::padded_scatter_bounds(bounds),
+                        DEFAULT_MIN_MARGIN_X,
+                    );
+                }
             }
             response.changed = true;
         }
@@ -168,10 +204,22 @@ impl ScatterControlPanel {
         if edited.x_zoom != initial.x_zoom
             && let (Some(scale), Some(bounds)) = (x_zoom_scale, x_bounds)
         {
+            let window_size = scale.value_at(edited.x_zoom);
+            if viewport.lock_aspect_ratio {
+                let current_x_span = viewport.x_window_size;
+                let zoom_factor = if current_x_span.is_finite() && current_x_span > 0.0 {
+                    window_size / current_x_span
+                } else {
+                    1.0
+                };
+                let y_span = viewport.y_span() * zoom_factor;
+                let y_center = viewport.y_min * 0.5 + viewport.y_max * 0.5;
+                viewport.set_manual_y_bounds(y_center - y_span * 0.5, y_center + y_span * 0.5);
+            }
             viewport.x_mode = AxisZoomMode::Manual;
             viewport.follow = FollowMode::Free;
             response.changed |= viewport.set_x_window_size_manual(
-                scale.value_at(edited.x_zoom),
+                window_size,
                 bounds.x_min,
                 bounds.x_max,
                 DEFAULT_MIN_MARGIN_X,
@@ -197,7 +245,25 @@ impl ScatterControlPanel {
             && let Some(scale) = y_zoom_scale
         {
             let window_size = scale.value_at(edited.y_zoom);
+            let current_y_span = viewport.y_span();
+            let zoom_factor = if current_y_span.is_finite() && current_y_span > 0.0 {
+                window_size / current_y_span
+            } else {
+                1.0
+            };
             let center = viewport.y_min * 0.5 + viewport.y_max * 0.5;
+            if viewport.lock_aspect_ratio
+                && let Some(bounds) = x_bounds
+            {
+                viewport.x_mode = AxisZoomMode::Manual;
+                viewport.follow = FollowMode::Free;
+                response.changed |= viewport.set_x_window_size_manual(
+                    viewport.x_window_size * zoom_factor,
+                    bounds.x_min,
+                    bounds.x_max,
+                    DEFAULT_MIN_MARGIN_X,
+                );
+            }
             viewport.set_manual_y_bounds(center - window_size * 0.5, center + window_size * 0.5);
             response.changed = true;
         }
@@ -325,6 +391,7 @@ struct ScatterControlValues {
 #[derive(Clone, Copy, Debug)]
 struct ScatterPanelView {
     is_visible: bool,
+    lock_aspect_ratio: bool,
     x_mode_placeholder: &'static str,
     y_mode_placeholder: &'static str,
     x_mode_dropdown_id: egui::Id,
@@ -364,6 +431,7 @@ struct PanelView {
 #[derive(Clone, Copy, Debug, Default)]
 struct PanelClicks {
     visibility_toggled: bool,
+    aspect_ratio_toggled: bool,
     download: bool,
 }
 
@@ -394,7 +462,30 @@ fn build_scatter_panel(
             });
 
             if view.is_visible {
-                root.col(Col::new().xs(5).md(5), |root| {
+                root.col(Col::new().xs(2).md(2), |root| {
+                    let (icon, variant, hover_text) = if view.lock_aspect_ratio {
+                        (
+                            prelude::SvgIcon::AspectRatioFill,
+                            prelude::Variant::Info,
+                            "Unlock the scatter plot's 1:1 X/Y aspect ratio",
+                        )
+                    } else {
+                        (
+                            prelude::SvgIcon::AspectRatio,
+                            prelude::Variant::Secondary,
+                            "Lock the scatter plot to a 1:1 X/Y aspect ratio",
+                        )
+                    };
+                    clicks.aspect_ratio_toggled = root
+                        .button(
+                            Button::new("")
+                                .icon(icon)
+                                .variant(variant)
+                                .hover_text(hover_text),
+                        )
+                        .clicked();
+                });
+                root.col(Col::new().xs(4).md(4), |root| {
                     if let Some(selected) = root
                         .dropdown(
                             DisclosureState::uncontrolled(view.x_mode_dropdown_id, false),
@@ -409,7 +500,7 @@ fn build_scatter_panel(
                         values.x_mode_index = selected;
                     }
                 });
-                root.col(Col::new().xs(5).md(5), |root| {
+                root.col(Col::new().xs(4).md(4), |root| {
                     if let Some(selected) = root
                         .dropdown(
                             DisclosureState::uncontrolled(view.y_mode_dropdown_id, false),
@@ -603,8 +694,7 @@ fn scatter_bounds_for_mode(
 ) -> Option<DataBounds> {
     match mode {
         AxisZoomMode::FitVisible => visible_bounds.or(all_bounds),
-        AxisZoomMode::FitAll => all_bounds,
-        AxisZoomMode::Manual => visible_bounds.or(all_bounds),
+        AxisZoomMode::FitAll | AxisZoomMode::Manual => all_bounds,
     }
 }
 
@@ -754,6 +844,27 @@ mod tests {
 
         let scale = SliderScale::new(0.0, 10.0, true).expect("non-empty domain");
         assert!(!scale.logarithmic);
+    }
+
+    #[test]
+    fn manual_scatter_controls_use_stable_full_data_bounds() {
+        let visible_bounds = DataBounds {
+            x_min: 2.0,
+            x_max: 4.0,
+            y_min: 3.0,
+            y_max: 5.0,
+        };
+        let all_bounds = DataBounds {
+            x_min: 0.0,
+            x_max: 10.0,
+            y_min: -5.0,
+            y_max: 15.0,
+        };
+
+        assert_eq!(
+            scatter_bounds_for_mode(AxisZoomMode::Manual, Some(visible_bounds), Some(all_bounds),),
+            Some(all_bounds),
+        );
     }
 
     #[test]

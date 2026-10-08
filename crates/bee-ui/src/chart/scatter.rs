@@ -347,8 +347,14 @@ impl ScatterPlot {
                 viewport.y_mode == super::AxisZoomMode::Manual,
             )
         });
+        let lock_aspect_ratio = viewport
+            .as_deref()
+            .is_some_and(|viewport| viewport.lock_aspect_ratio);
 
         let mut plot = props.plot.build_plot(ui.available_width());
+        if lock_aspect_ratio {
+            plot = plot.data_aspect(1.0);
+        }
         if let Some(axis_manual) = axis_manual {
             plot = plot
                 .allow_zoom(axis_manual)

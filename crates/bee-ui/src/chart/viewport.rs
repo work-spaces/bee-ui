@@ -29,6 +29,7 @@ pub struct ViewportState {
     pub y_mode: AxisZoomMode,
     pub follow: FollowMode,
     pub x_window_size: f64,
+    pub lock_aspect_ratio: bool,
 }
 
 impl Default for ViewportState {
@@ -42,6 +43,7 @@ impl Default for ViewportState {
             y_mode: AxisZoomMode::FitVisible,
             follow: FollowMode::PinnedToLatest,
             x_window_size: 1.0,
+            lock_aspect_ratio: false,
         }
     }
 }
