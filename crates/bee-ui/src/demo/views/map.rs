@@ -29,7 +29,17 @@ pub(super) fn render_view_map(ui: &mut UiRoot<'_>) {
                 lon_lat(-122.4120, 37.7690),
             ];
             ui.map_with_overlay(
-                Map::new("bee_ui.demo.map.san_francisco", center.clone()).height(360.0),
+                Map::new("bee_ui.demo.map.san_francisco", center.clone())
+                    .height(360.0)
+                    .icon(
+                        MapIcon::new(
+                            SpanIcon::new(SvgIcon::AirplaneFill).egui_image(None),
+                            route[1].clone(),
+                        )
+                        .rotation(45.0)
+                        .size(28.0)
+                        .tint(egui::Color32::from_rgb(40, 120, 240)),
+                    ),
                 |overlay_ui, response, projector| {
                     let painter = overlay_ui.painter().with_clip_rect(response.rect);
                     let route_points = route

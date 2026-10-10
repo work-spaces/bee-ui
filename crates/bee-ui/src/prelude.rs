@@ -26,6 +26,7 @@ pub use crate::core::{
 pub use crate::demo::show_bootstrap_demo;
 pub use crate::layout::{Breakpoint, Spacing, Span};
 pub use crate::map::{
-    Map, MapControlPanel, MapRoute, MapRouteInterpolation, Position, Projector, lat_lon, lon_lat,
+    Map, MapControlPanel, MapIcon, MapRoute, MapRouteInterpolation, Position, Projector, lat_lon,
+    lon_lat,
 };
 pub use crate::{show_in_ui, show_root, show_root_with_frame};

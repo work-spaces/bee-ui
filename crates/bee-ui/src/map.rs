@@ -23,6 +23,7 @@ pub struct Map {
     fill_height: bool,
     initial_zoom: Option<f64>,
     routes: Vec<MapRoute>,
+    icons: Vec<MapIcon>,
 }
 
 /// A geographic route to draw over a [`Map`].
@@ -34,6 +35,18 @@ pub struct MapRoute {
     interpolation: MapRouteInterpolation,
 }
 
+/// An image to draw at a geographic position over a [`Map`].
+///
+/// The top of the image should point north when unrotated. Rotation is clockwise in degrees, so
+/// `0.0` points north and `90.0` points east.
+pub struct MapIcon {
+    image: egui::Image<'static>,
+    position: Position,
+    rotation_degrees: f32,
+    size: f32,
+    tint: Option<Color32>,
+}
+
 /// How consecutive points in a [`MapRoute`] are connected.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MapRouteInterpolation {
@@ -42,6 +55,44 @@ pub enum MapRouteInterpolation {
     Line,
     /// Follow the shortest great-circle arc between points on the globe.
     Arc,
+}
+
+impl MapIcon {
+    /// Creates a map icon from an egui image and its geographic position.
+    ///
+    /// Use [`lon_lat`] to construct the position, for example `MapIcon::new(image,
+    /// lon_lat(-122.4, 37.8))`. The image is 24 points square by default.
+    pub fn new(image: egui::Image<'static>, position: Position) -> Self {
+        Self {
+            image,
+            position,
+            rotation_degrees: 0.0,
+            size: 24.0,
+            tint: None,
+        }
+    }
+
+    /// Sets the clockwise rotation in degrees. Zero degrees points north.
+    pub fn rotation(mut self, degrees: f32) -> Self {
+        self.rotation_degrees = if degrees.is_finite() {
+            degrees.rem_euclid(360.0)
+        } else {
+            0.0
+        };
+        self
+    }
+
+    /// Sets the image width and height in points. Defaults to 24 points.
+    pub fn size(mut self, size: f32) -> Self {
+        self.size = if size.is_finite() { size.max(0.0) } else { 0.0 };
+        self
+    }
+
+    /// Tints the image with the given color.
+    pub fn tint(mut self, tint: Color32) -> Self {
+        self.tint = Some(tint);
+        self
+    }
 }
 
 impl MapRoute {
@@ -92,6 +143,7 @@ impl Map {
             fill_height: false,
             initial_zoom: None,
             routes: Vec::new(),
+            icons: Vec::new(),
         }
     }
 
@@ -104,6 +156,18 @@ impl Map {
     /// Adds multiple geographic routes to draw over the map.
     pub fn routes(mut self, routes: impl IntoIterator<Item = MapRoute>) -> Self {
         self.routes.extend(routes);
+        self
+    }
+
+    /// Adds a geographic icon to draw over the map.
+    pub fn icon(mut self, icon: MapIcon) -> Self {
+        self.icons.push(icon);
+        self
+    }
+
+    /// Adds multiple geographic icons to draw over the map.
+    pub fn icons(mut self, icons: impl IntoIterator<Item = MapIcon>) -> Self {
+        self.icons.extend(icons);
         self
     }
 
@@ -157,15 +221,24 @@ impl Map {
         let fill_height = self.fill_height;
         let initial_zoom = self.initial_zoom;
         let routes = self.routes;
+        let icons = self.icons;
         let state = ctx.data_mut(|data| {
             data.get_temp_mut_or_insert_with(state_id, || {
-                Arc::new(Mutex::new(MapState::new(ctx.clone(), initial_zoom)))
+                Arc::new(Mutex::new(MapState::new(
+                    ctx.clone(),
+                    initial_zoom,
+                    center.clone(),
+                )))
             })
             .clone()
         });
         let mut state = state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.center != center {
+            state.memory.center_at(center.clone());
+            state.center = center.clone();
+        }
 
         Frame::group(ui.style())
             .show(ui, |ui| {
@@ -178,7 +251,7 @@ impl Map {
                 };
                 let map_size = Vec2::new(ui.available_width().max(0.0), map_height);
                 let (map_rect, _) = ui.allocate_exact_size(map_size, Sense::hover());
-                let MapState { tiles, memory } = &mut *state;
+                let MapState { tiles, memory, .. } = &mut *state;
 
                 ui.scope_builder(UiBuilder::new().max_rect(map_rect), |map_ui| {
                     WalkersMap::new(Some(tiles), memory, center.clone())
@@ -191,6 +264,26 @@ impl Map {
                                     painter.add(egui::Shape::line(points, route.stroke));
                                 }
                             }
+                            overlay_ui.scope(|icon_ui| {
+                                icon_ui.shrink_clip_rect(response.rect);
+                                for icon in &icons {
+                                    let projected =
+                                        project_position(projector, icon.position.clone());
+                                    let rect =
+                                        Rect::from_center_size(projected, Vec2::splat(icon.size));
+                                    let mut image =
+                                        icon.image.clone().fit_to_exact_size(rect.size());
+                                    if let Some(tint) = icon.tint {
+                                        image = image.tint(tint);
+                                    }
+                                    image
+                                        .rotate(
+                                            icon.rotation_degrees.to_radians(),
+                                            Vec2::splat(0.5),
+                                        )
+                                        .paint_at(icon_ui, rect);
+                                }
+                            });
 
                             draw_overlay(overlay_ui, &response, projector);
 
@@ -320,10 +413,11 @@ impl Widget for Map {
 struct MapState {
     tiles: HttpTiles,
     memory: MapMemory,
+    center: Position,
 }
 
 impl MapState {
-    fn new(ctx: egui::Context, initial_zoom: Option<f64>) -> Self {
+    fn new(ctx: egui::Context, initial_zoom: Option<f64>, center: Position) -> Self {
         let mut memory = MapMemory::default();
         if let Some(zoom) = initial_zoom {
             let _ = memory.set_zoom(zoom);
@@ -332,6 +426,7 @@ impl MapState {
         Self {
             tiles: HttpTiles::new(OpenStreetMap, ctx),
             memory,
+            center,
         }
     }
 }
