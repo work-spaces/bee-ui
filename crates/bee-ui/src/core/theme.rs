@@ -812,8 +812,8 @@ impl UiTheme {
             } else {
                 tone.bg_subtle
             },
-            text: tone.text,
-            border: tone.border_subtle,
+            text: tone.fill,
+            border: tone.border,
             border_width: tokens.border_width,
             corner_radius: tokens.border_radius,
             padding_x: tokens.padding_x,
@@ -1199,6 +1199,13 @@ mod tests {
         let alert_outlined = theme.resolve_alert_style(Variant::Warning, true);
         assert_ne!(alert_filled.fill, alert_outlined.fill);
         assert_eq!(alert_outlined.fill, theme.palette.surface);
+
+        let warning = theme.resolve_variant(Variant::Warning);
+        assert_eq!(alert_filled.fill, warning.bg_subtle);
+        assert_eq!(alert_filled.text, warning.fill);
+        assert_eq!(alert_filled.border, warning.fill);
+        assert_eq!(alert_outlined.text, warning.fill);
+        assert_eq!(alert_outlined.border, warning.fill);
 
         let nav_default = theme.resolve_nav_item_style(Variant::Primary, NavItemState::Default);
         let nav_active = theme.resolve_nav_item_style(Variant::Primary, NavItemState::Active);

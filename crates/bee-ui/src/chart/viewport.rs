@@ -273,6 +273,30 @@ impl ViewportState {
         changed
     }
 
+    /// Sets manual Y bounds while keeping the window within the data range plus a margin,
+    /// mirroring [`Self::set_manual_x_bounds`].
+    pub fn set_manual_y_bounds_clamped(
+        &mut self,
+        y_min: f64,
+        y_max: f64,
+        data_y_min: f64,
+        data_y_max: f64,
+        min_margin_y: f64,
+    ) -> bool {
+        let requested_height = sanitize_window_size((y_max - y_min).abs(), self.y_span());
+        let Some((y_min, y_max)) = clamp_x_window_to_data(
+            y_min,
+            y_min + requested_height,
+            data_y_min,
+            data_y_max,
+            min_margin_y,
+        ) else {
+            return false;
+        };
+
+        self.set_manual_y_bounds(y_min, y_max)
+    }
+
     pub fn set_manual_y_bounds(&mut self, y_min: f64, y_max: f64) -> bool {
         let fallback = sanitize_window_size(self.y_span(), DEFAULT_DEGENERATE_SPAN);
         let (y_min, y_max) = sanitize_range(y_min, y_max, fallback);
@@ -741,6 +765,24 @@ mod tests {
         assert!(changed);
         assert_eq!(viewport.follow, FollowMode::Free);
         assert_eq!(viewport.x_mode, AxisZoomMode::Manual);
+    }
+
+    #[test]
+    fn manual_y_bounds_clamped_keeps_window_within_data_margin() {
+        let mut viewport = ViewportState {
+            y_min: 0.0,
+            y_max: 4.0,
+            ..ViewportState::default()
+        };
+
+        assert!(viewport.set_manual_y_bounds_clamped(30.0, 34.0, 0.0, 20.0, DEFAULT_MIN_MARGIN_X));
+        assert_eq!(viewport.y_mode, AxisZoomMode::Manual);
+        assert!((viewport.y_max - 20.2).abs() <= 1e-9);
+        assert!((viewport.y_span() - 4.0).abs() <= 1e-9);
+
+        viewport.set_manual_y_bounds_clamped(-10.0, -6.0, 0.0, 20.0, DEFAULT_MIN_MARGIN_X);
+        assert!((viewport.y_min + 0.2).abs() <= 1e-9);
+        assert!((viewport.y_span() - 4.0).abs() <= 1e-9);
     }
 
     #[test]

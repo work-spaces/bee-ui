@@ -1168,6 +1168,45 @@ mod tests {
     }
 
     #[test]
+    fn identical_sibling_dropdowns_do_not_clash_ids() {
+        let ctx = egui::Context::default();
+        ctx.options_mut(|options| options.warn_on_id_clash = true);
+        let dropdown = || {
+            DropdownProps::new("Free")
+                .item("Fit")
+                .item("All")
+                .item("Free")
+        };
+
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            crate::show_root(ctx, |ui| {
+                ui.hstack(HStack::new().gap(4.0), |ui| {
+                    ui.dropdown(
+                        DisclosureState::uncontrolled("bee-ui.test.dd.x", false),
+                        dropdown(),
+                    );
+                    ui.dropdown(
+                        DisclosureState::uncontrolled("bee-ui.test.dd.y", false),
+                        dropdown(),
+                    );
+                });
+            });
+        });
+
+        // egui reports ID clashes by painting a "🔥" warning onto the debug layer.
+        let clash = output
+            .shapes
+            .iter()
+            .find_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) if text.galley.text().contains('🔥') => {
+                    Some(text.galley.text().to_owned())
+                }
+                _ => None,
+            });
+        assert_eq!(clash, None);
+    }
+
+    #[test]
     fn standalone_col_fills_available_width() {
         let ctx = egui::Context::default();
 

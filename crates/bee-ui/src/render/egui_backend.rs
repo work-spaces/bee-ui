@@ -1427,38 +1427,38 @@ impl Backend for EguiBackend {
                     visuals.widgets.noninteractive.fg_stroke.color = style.item_disabled_text;
                 }
 
-                let combo_response = egui::ComboBox::from_id_salt(combo_ui.id().with((
-                    "dropdown",
-                    props.label.as_str(),
-                    props.items.len(),
-                )))
-                .selected_text(egui::RichText::new(selected_text).color(selected_text_color))
-                .show_ui(combo_ui, |options_ui| {
-                    *options_ui.visuals_mut() = popup_visuals.clone();
+                // `Ui::id()` is shared by sibling child scopes, so identical dropdowns placed
+                // side by side (same label and item count) would clash. `unique_id()` is
+                // distinct per sibling and stable across frames.
+                let combo_id = combo_ui.unique_id().with("dropdown");
+                let combo_response = egui::ComboBox::from_id_salt(combo_id)
+                    .selected_text(egui::RichText::new(selected_text).color(selected_text_color))
+                    .show_ui(combo_ui, |options_ui| {
+                        *options_ui.visuals_mut() = popup_visuals.clone();
 
-                    for (index, item) in props.items.iter().enumerate() {
-                        let text_color = if item.disabled {
-                            style.item_disabled_text
-                        } else if item.active {
-                            style.item_active_text
-                        } else {
-                            style.item_text
-                        };
+                        for (index, item) in props.items.iter().enumerate() {
+                            let text_color = if item.disabled {
+                                style.item_disabled_text
+                            } else if item.active {
+                                style.item_active_text
+                            } else {
+                                style.item_text
+                            };
 
-                        let response = options_ui
-                            .add_enabled_ui(!item.disabled, |item_ui| {
-                                item_ui.selectable_label(
-                                    item.active,
-                                    egui::RichText::new(&item.text).color(text_color),
-                                )
-                            })
-                            .inner;
+                            let response = options_ui
+                                .add_enabled_ui(!item.disabled, |item_ui| {
+                                    item_ui.selectable_label(
+                                        item.active,
+                                        egui::RichText::new(&item.text).color(text_color),
+                                    )
+                                })
+                                .inner;
 
-                        if response.clicked() {
-                            result.clicked_item = Some(index);
+                            if response.clicked() {
+                                result.clicked_item = Some(index);
+                            }
                         }
-                    }
-                });
+                    });
 
                 if combo_response.response.clicked() {
                     result.toggle_clicked = true;

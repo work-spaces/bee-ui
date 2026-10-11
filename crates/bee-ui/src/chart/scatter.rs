@@ -437,7 +437,13 @@ impl ScatterPlot {
                     && (!approx_eq(plotted_min[1], requested_y_min)
                         || !approx_eq(plotted_max[1], requested_y_max))
                 {
-                    viewport.set_manual_y_bounds(plotted_min[1], plotted_max[1]);
+                    viewport.set_manual_y_bounds_clamped(
+                        plotted_min[1],
+                        plotted_max[1],
+                        bounds.y_min,
+                        bounds.y_max,
+                        super::DEFAULT_MIN_MARGIN_X,
+                    );
                     response.changed = true;
                 }
             }

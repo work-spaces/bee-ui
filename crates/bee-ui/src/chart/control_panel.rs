@@ -446,127 +446,121 @@ fn build_scatter_panel(
 
     root.container(Container::fluid(), |root| {
         root.row(row, |root| {
-            root.col(Col::new().xs(2).md(2), |root| {
-                let button_icon = if view.is_visible {
-                    prelude::SvgIcon::EyeSlash
-                } else {
-                    prelude::SvgIcon::List
-                };
-                clicks.visibility_toggled = root
-                    .button(
-                        Button::new("")
-                            .icon(button_icon)
-                            .variant(prelude::Variant::Primary),
-                    )
-                    .clicked();
-            });
-
-            if view.is_visible {
-                root.col(Col::new().xs(2).md(2), |root| {
-                    let (icon, variant, hover_text) = if view.lock_aspect_ratio {
-                        (
-                            prelude::SvgIcon::AspectRatioFill,
-                            prelude::Variant::Info,
-                            "Unlock the scatter plot's 1:1 X/Y aspect ratio",
-                        )
+            root.col(Col::new().xs(12).md(12), |root| {
+                root.hstack(HStack::new().gap(spacing.md), |root| {
+                    let button_icon = if view.is_visible {
+                        prelude::SvgIcon::EyeSlash
                     } else {
-                        (
-                            prelude::SvgIcon::AspectRatio,
-                            prelude::Variant::Secondary,
-                            "Lock the scatter plot to a 1:1 X/Y aspect ratio",
-                        )
+                        prelude::SvgIcon::List
                     };
-                    clicks.aspect_ratio_toggled = root
+                    clicks.visibility_toggled = root
                         .button(
                             Button::new("")
-                                .icon(icon)
-                                .variant(variant)
-                                .hover_text(hover_text),
+                                .icon(button_icon)
+                                .variant(prelude::Variant::Primary),
                         )
                         .clicked();
-                });
-                root.col(Col::new().xs(4).md(4), |root| {
-                    if let Some(selected) = root
-                        .dropdown(
-                            DisclosureState::uncontrolled(view.x_mode_dropdown_id, false),
-                            mode_dropdown(
-                                SCATTER_MODE_OPTIONS,
-                                values.x_mode_index,
-                                view.x_mode_placeholder,
-                            ),
-                        )
-                        .clicked_index()
-                    {
-                        values.x_mode_index = selected;
+
+                    if view.is_visible {
+                        let (icon, hover_text) = if view.lock_aspect_ratio {
+                            (
+                                prelude::SvgIcon::AspectRatioFill,
+                                "Unlock the scatter plot's 1:1 X/Y aspect ratio",
+                            )
+                        } else {
+                            (
+                                prelude::SvgIcon::AspectRatio,
+                                "Lock the scatter plot to a 1:1 X/Y aspect ratio",
+                            )
+                        };
+                        clicks.aspect_ratio_toggled = root
+                            .button(
+                                Button::new("")
+                                    .icon(icon)
+                                    .variant(prelude::Variant::Secondary)
+                                    .hover_text(hover_text),
+                            )
+                            .clicked();
+
+                        if let Some(selected) = root
+                            .dropdown(
+                                DisclosureState::uncontrolled(view.x_mode_dropdown_id, false),
+                                mode_dropdown(
+                                    SCATTER_MODE_OPTIONS,
+                                    values.x_mode_index,
+                                    view.x_mode_placeholder,
+                                ),
+                            )
+                            .clicked_index()
+                        {
+                            values.x_mode_index = selected;
+                        }
+
+                        if let Some(selected) = root
+                            .dropdown(
+                                DisclosureState::uncontrolled(view.y_mode_dropdown_id, false),
+                                mode_dropdown(
+                                    SCATTER_MODE_OPTIONS,
+                                    values.y_mode_index,
+                                    view.y_mode_placeholder,
+                                ),
+                            )
+                            .clicked_index()
+                        {
+                            values.y_mode_index = selected;
+                        }
                     }
                 });
-                root.col(Col::new().xs(4).md(4), |root| {
-                    if let Some(selected) = root
-                        .dropdown(
-                            DisclosureState::uncontrolled(view.y_mode_dropdown_id, false),
-                            mode_dropdown(
-                                SCATTER_MODE_OPTIONS,
-                                values.y_mode_index,
-                                view.y_mode_placeholder,
-                            ),
-                        )
-                        .clicked_index()
-                    {
-                        values.y_mode_index = selected;
-                    }
-                });
-            }
+            });
         });
 
         if view.is_visible {
             root.row(row, |root| {
-                root.col(Col::new().xs(2).md(2), |root| {
-                    root.raw(|ui| {
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            prelude::SpanIcon::new(prelude::SvgIcon::Arrows)
-                                .render_with_tint(ui, None);
-                        });
-                    });
-                });
-                root.col(Col::new().xs(5).md(5), |root| {
-                    root.form_range(
-                        &mut values.x_zoom,
-                        normalized_range(view.x_zoom_enabled).variant(prelude::Variant::Primary),
-                    );
-                });
-                root.col(Col::new().xs(5).md(5), |root| {
-                    root.form_range(
-                        &mut values.y_zoom,
-                        normalized_range(view.y_zoom_enabled).variant(prelude::Variant::Primary),
+                root.col(Col::new().xs(12).md(12), |root| {
+                    slider_pair(
+                        root,
+                        prelude::SvgIcon::Arrows,
+                        (&mut values.x_zoom, view.x_zoom_enabled),
+                        (&mut values.y_zoom, view.y_zoom_enabled),
                     );
                 });
             });
-
             root.row(row, |root| {
-                root.col(Col::new().xs(2).md(2), |root| {
-                    root.raw(|ui| {
-                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                            prelude::SpanIcon::new(prelude::SvgIcon::InputCursor)
-                                .render_with_tint(ui, None);
-                        });
-                    });
-                });
-                root.col(Col::new().xs(5).md(5), |root| {
-                    root.form_range(
-                        &mut values.x_range,
-                        normalized_range(view.x_range_enabled).variant(prelude::Variant::Secondary),
-                    );
-                });
-                root.col(Col::new().xs(5).md(5), |root| {
-                    root.form_range(
-                        &mut values.y_range,
-                        normalized_range(view.y_range_enabled).variant(prelude::Variant::Secondary),
+                root.col(Col::new().xs(12).md(12), |root| {
+                    slider_pair(
+                        root,
+                        prelude::SvgIcon::InputCursor,
+                        (&mut values.x_range, view.x_range_enabled),
+                        (&mut values.y_range, view.y_range_enabled),
                     );
                 });
             });
         }
     });
     clicks
+}
+
+/// Draws an icon label followed by X and Y sliders that split the remaining width evenly.
+fn slider_pair(
+    root: &mut UiRoot<'_>,
+    icon: prelude::SvgIcon,
+    (x_value, x_enabled): (&mut f32, bool),
+    (y_value, y_enabled): (&mut f32, bool),
+) {
+    let gap = bootstrap_tokens::spacing().md;
+    root.hstack(HStack::new().gap(gap), |root| {
+        root.label(prelude::Label::new(prelude::RichText::new().icon(icon)));
+        let slider_width = root.raw(|ui| ((ui.available_width() - gap) * 0.5).max(0.0));
+        for (value, enabled) in [(x_value, x_enabled), (y_value, y_enabled)] {
+            root.form_range(
+                value,
+                normalized_range(enabled)
+                    .fill_width(false)
+                    .width(slider_width)
+                    .variant(prelude::Variant::Secondary),
+            );
+        }
+    });
 }
 
 /// Draws the time-series panel, writing input edits into `values` and returning button clicks.
