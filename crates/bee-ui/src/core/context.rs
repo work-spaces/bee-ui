@@ -509,23 +509,52 @@ impl<'ui> UiRoot<'ui> {
 
         let inner = backend.render_card(self.ui, &props, |card_ui| {
             if let Some(header) = &props.header {
-                EguiBackend::render_heading_span(card_ui, header, style.header_text, &theme);
-                if style.header_gap > 0.0 {
-                    card_ui.add_space(style.header_gap);
+                let mut header_frame = egui::Frame::new();
+                if !props.outlined {
+                    header_frame.fill = style.cap_fill;
+                    header_frame.corner_radius = egui::CornerRadius {
+                        nw: style.corner_radius,
+                        ne: style.corner_radius,
+                        sw: 0,
+                        se: 0,
+                    };
                 }
+                header_frame.inner_margin =
+                    egui::Margin::symmetric(style.body_padding_x as i8, style.header_gap as i8);
+                header_frame.show(card_ui, |header_ui| {
+                    header_ui.set_min_width(header_ui.available_width());
+                    EguiBackend::render_heading_span(header_ui, header, style.header_text, &theme);
+                });
             }
 
-            let inner = f(&mut UiRoot::new(card_ui, state));
+            let mut content_frame = egui::Frame::new();
+            content_frame.inner_margin = egui::Margin::symmetric(style.body_padding_x as i8, 0);
+            content_frame
+                .show(card_ui, |content_ui| {
+                    content_ui.set_min_width(content_ui.available_width());
+                    if props.header.is_none() {
+                        content_ui.add_space(style.body_padding_y);
+                    }
 
-            if let Some(footer) = &props.footer {
-                if style.footer_gap > 0.0 {
-                    card_ui.add_space(style.footer_gap);
-                }
-                card_ui.separator();
-                EguiBackend::render_plain_span(card_ui, footer, style.footer_text, &theme);
-            }
+                    let inner = f(&mut UiRoot::new(content_ui, state));
 
-            inner
+                    if let Some(footer) = &props.footer {
+                        if style.footer_gap > 0.0 {
+                            content_ui.add_space(style.footer_gap);
+                        }
+                        content_ui.separator();
+                        EguiBackend::render_plain_span(
+                            content_ui,
+                            footer,
+                            style.footer_text,
+                            &theme,
+                        );
+                    }
+
+                    content_ui.add_space(style.body_padding_y);
+                    inner
+                })
+                .inner
         });
 
         state.backend = backend;

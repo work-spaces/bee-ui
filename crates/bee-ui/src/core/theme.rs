@@ -525,20 +525,20 @@ impl UiTheme {
         let tokens = bootstrap_tokens::card_component(self.color_mode());
 
         CardStyle {
-            fill: if outlined {
-                self.palette.surface
+            fill: self.palette.surface,
+            cap_fill: if outlined {
+                egui::Color32::TRANSPARENT
             } else {
-                tone.bg_subtle
+                tone.fill
             },
-            cap_fill: tokens.cap_bg,
-            border: if outlined {
-                tone.border
-            } else {
-                tokens.border_color
-            },
+            border: tone.border,
             border_width: f32::from(tokens.border_width),
             corner_radius: tokens.border_radius,
-            header_text: self.palette.text_default,
+            header_text: if outlined {
+                self.palette.text_default
+            } else {
+                tone.on_fill
+            },
             body_text: self.palette.text_default,
             footer_text: self.palette.text_muted,
             body_padding_x: f32::from(tokens.spacer_x),

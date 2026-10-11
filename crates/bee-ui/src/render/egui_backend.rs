@@ -530,8 +530,7 @@ impl Backend for EguiBackend {
         frame.fill = style.fill;
         frame.stroke = egui::Stroke::new(style.border_width, style.border);
         frame.corner_radius = corner_radius(style.corner_radius);
-        frame.inner_margin =
-            egui::Margin::symmetric(as_i8(style.body_padding_x), as_i8(style.body_padding_y));
+        frame.inner_margin = egui::Margin::symmetric(0, 0);
 
         let card_width = normalize_non_negative(ui.available_width());
         let card_height = if props.fill_height {

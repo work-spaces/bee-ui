@@ -1,4 +1,4 @@
-use bee_ui::core::theme::{FormValidationState, NavItemState};
+use bee_ui::core::theme::{FormValidationState, NavItemState, ThemeMode};
 use bee_ui::core::{UiTheme, Variant};
 
 fn all_variants() -> [Variant; 8] {
@@ -55,7 +55,7 @@ fn component_style_resolvers_reflect_props() {
 
     let card_default = theme.resolve_card_style(Variant::Primary, false);
     let card_outlined = theme.resolve_card_style(Variant::Primary, true);
-    assert_ne!(card_default.fill, card_outlined.fill);
+    assert_ne!(card_default.cap_fill, card_outlined.cap_fill);
 
     let badge_square = theme.resolve_badge_style(Variant::Info, false);
     let badge_pill = theme.resolve_badge_style(Variant::Info, true);
@@ -106,6 +106,27 @@ fn badge_and_button_styles_are_consistent_with_variant_tones() {
 }
 
 #[test]
+fn filled_cards_apply_variant_colors_only_to_the_header() {
+    let mut theme = UiTheme::default();
+
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        theme.set_mode(mode);
+
+        for variant in all_variants() {
+            let card = theme.resolve_card_style(variant, false);
+            let button = theme.resolve_button_style(variant);
+
+            assert_eq!(card.fill, theme.palette.surface);
+            assert_eq!(card.cap_fill, button.fill);
+            assert_eq!(card.border, theme.resolve_variant(variant).border);
+            assert_eq!(card.header_text, button.text);
+            assert_eq!(card.body_text, theme.palette.text_default);
+            assert_eq!(card.footer_text, theme.palette.text_muted);
+        }
+    }
+}
+
+#[test]
 fn outlined_cards_use_surface_fill_and_variant_border() {
     let theme = UiTheme::default();
 
@@ -114,7 +135,11 @@ fn outlined_cards_use_surface_fill_and_variant_border() {
         let outlined = theme.resolve_card_style(variant, true);
 
         assert_eq!(outlined.fill, theme.palette.surface);
+        assert_eq!(outlined.cap_fill, egui::Color32::TRANSPARENT);
         assert_eq!(outlined.border, tone.border);
+        assert_eq!(outlined.header_text, theme.palette.text_default);
+        assert_eq!(outlined.body_text, theme.palette.text_default);
+        assert_eq!(outlined.footer_text, theme.palette.text_muted);
     }
 }
 
