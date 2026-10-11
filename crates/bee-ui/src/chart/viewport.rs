@@ -308,6 +308,63 @@ impl ViewportState {
         changed
     }
 
+    /// Moves the view by `(dx, dy)` in data units without changing its spans. The axes become
+    /// manual and the view stops following the data. Returns whether the bounds changed;
+    /// non-finite or zero offsets leave the viewport untouched.
+    pub fn pan_by(&mut self, dx: f64, dy: f64) -> bool {
+        if !(dx.is_finite() && dy.is_finite()) || (dx == 0.0 && dy == 0.0) {
+            return false;
+        }
+
+        let (x_min, x_max, y_min, y_max) = self.normalized_bounds();
+        let (x_min, x_max, y_min, y_max) = (x_min + dx, x_max + dx, y_min + dy, y_max + dy);
+        let valid = |min: f64, max: f64| min.is_finite() && max.is_finite() && max - min > 0.0;
+        if !valid(x_min, x_max) || !valid(y_min, y_max) {
+            return false;
+        }
+
+        self.x_min = x_min;
+        self.x_max = x_max;
+        self.y_min = y_min;
+        self.y_max = y_max;
+        self.x_window_size = x_max - x_min;
+        self.x_mode = AxisZoomMode::Manual;
+        self.y_mode = AxisZoomMode::Manual;
+        self.follow = FollowMode::Free;
+        true
+    }
+
+    /// Zooms both axes by the same `factor` about `center`, so the point at `center` stays
+    /// put and the aspect ratio is preserved. A factor above one zooms in. The axes become
+    /// manual and the view stops following the data. Returns whether the bounds changed;
+    /// invalid factors, centers, or results leave the viewport untouched.
+    pub fn zoom_about(&mut self, factor: f64, (center_x, center_y): (f64, f64)) -> bool {
+        if !(factor.is_finite() && factor > 0.0 && center_x.is_finite() && center_y.is_finite())
+            || approx_eq(factor, 1.0)
+        {
+            return false;
+        }
+
+        let (x_min, x_max, y_min, y_max) = self.normalized_bounds();
+        let zoom = |value: f64, center: f64| center + (value - center) / factor;
+        let (x_min, x_max) = (zoom(x_min, center_x), zoom(x_max, center_x));
+        let (y_min, y_max) = (zoom(y_min, center_y), zoom(y_max, center_y));
+        let valid = |min: f64, max: f64| min.is_finite() && max.is_finite() && max - min > 0.0;
+        if !valid(x_min, x_max) || !valid(y_min, y_max) {
+            return false;
+        }
+
+        self.x_min = x_min;
+        self.x_max = x_max;
+        self.y_min = y_min;
+        self.y_max = y_max;
+        self.x_window_size = x_max - x_min;
+        self.x_mode = AxisZoomMode::Manual;
+        self.y_mode = AxisZoomMode::Manual;
+        self.follow = FollowMode::Free;
+        true
+    }
+
     pub fn apply_modes_for_dataset(
         &mut self,
         dataset: &TimeSeriesDataset,
@@ -548,6 +605,98 @@ mod tests {
             .collect();
 
         TimeSeriesDataset::new(vec![TimeSeries::new("dense", "Dense").with_points(points)])
+    }
+
+    #[test]
+    fn pan_by_moves_both_axes_without_changing_their_spans() {
+        let mut viewport = ViewportState {
+            x_min: -10.0,
+            x_max: 10.0,
+            y_min: -5.0,
+            y_max: 5.0,
+            ..ViewportState::default()
+        };
+
+        assert!(viewport.pan_by(3.0, -2.0));
+        assert_eq!(
+            (
+                viewport.x_min,
+                viewport.x_max,
+                viewport.y_min,
+                viewport.y_max
+            ),
+            (-7.0, 13.0, -7.0, 3.0)
+        );
+        assert_eq!(viewport.x_window_size, 20.0);
+        assert_eq!(viewport.x_mode, AxisZoomMode::Manual);
+        assert_eq!(viewport.y_mode, AxisZoomMode::Manual);
+        assert_eq!(viewport.follow, FollowMode::Free);
+
+        let panned = viewport;
+        for (dx, dy) in [
+            (0.0, 0.0),
+            (f64::NAN, 1.0),
+            (1.0, f64::INFINITY),
+            (f64::MAX, 0.0),
+        ] {
+            assert!(!viewport.pan_by(dx, dy));
+            assert_eq!(viewport, panned);
+        }
+    }
+
+    #[test]
+    fn zoom_about_scales_both_axes_equally_and_keeps_the_center_fixed() {
+        let mut viewport = ViewportState {
+            x_min: -10.0,
+            x_max: 10.0,
+            y_min: -5.0,
+            y_max: 5.0,
+            ..ViewportState::default()
+        };
+
+        assert!(viewport.zoom_about(2.0, (10.0, 5.0)));
+        assert_eq!(
+            (
+                viewport.x_min,
+                viewport.x_max,
+                viewport.y_min,
+                viewport.y_max
+            ),
+            (0.0, 10.0, 0.0, 5.0)
+        );
+        assert_eq!(viewport.x_window_size, 10.0);
+        assert_eq!(viewport.x_mode, AxisZoomMode::Manual);
+        assert_eq!(viewport.y_mode, AxisZoomMode::Manual);
+        assert_eq!(viewport.follow, FollowMode::Free);
+
+        assert!(viewport.zoom_about(0.5, (0.0, 0.0)));
+        assert_eq!(
+            (
+                viewport.x_min,
+                viewport.x_max,
+                viewport.y_min,
+                viewport.y_max
+            ),
+            (0.0, 20.0, 0.0, 10.0)
+        );
+    }
+
+    #[test]
+    fn zoom_about_ignores_invalid_or_identity_zooms() {
+        let original = ViewportState::default();
+        let mut viewport = original;
+        for (factor, center) in [
+            (1.0, (0.0, 0.0)),
+            (0.0, (0.0, 0.0)),
+            (-2.0, (0.0, 0.0)),
+            (f64::NAN, (0.0, 0.0)),
+            (f64::INFINITY, (0.0, 0.0)),
+            (2.0, (f64::NAN, 0.0)),
+            (2.0, (0.0, f64::INFINITY)),
+        ] {
+            assert!(!viewport.zoom_about(factor, center));
+            assert_eq!(viewport, original);
+        }
     }
 
     #[test]

@@ -8,6 +8,7 @@ use crate::prelude::*;
 use super::shared;
 
 const SCATTER_PLOT_VIEWPORT_ID: &str = "runnerd_bs.demo.plots.scatter.viewport";
+const ROUTE_PLOT_VIEWPORT_ID: &str = "runnerd_bs.demo.plots.route.viewport";
 const PHASE_TWO_PLOT_VIEWPORT_ID: &str = "runnerd_bs.demo.plots.phase_two.viewport";
 const PHASE_THREE_PLOT_VIEWPORT_ID: &str = "runnerd_bs.demo.plots.phase_three.viewport";
 const PHASE_FOUR_PLOT_VIEWPORT_ID: &str = "runnerd_bs.demo.plots.phase_four.viewport";
@@ -60,6 +61,56 @@ pub(super) fn render_view_plots(ui: &mut UiRoot<'_>) {
                     ScatterControlPanel::show(scoped_ui, &mut viewport, dataset);
                 });
 
+                egui_ui
+                    .ctx()
+                    .data_mut(|data| data.insert_temp(viewport_id, viewport));
+            });
+        },
+    );
+
+    ui.card(
+        Card::new()
+            .title("Scatter plot — route, vector, and zoomable locked view")
+            .outline(),
+        |ui| {
+            ui.text(Text::new(
+                "Series can connect their points and carry arrows. Locking the view disables pan and zoom so the caller's viewport is authoritative; uniform zoom and drag-to-pan then let scrolling or pinching zoom both axes together about the pointer and dragging move the view.",
+            ));
+
+            ui.raw(|egui_ui| {
+                let reference = ViewportState {
+                    x_min: -10.0,
+                    x_max: 10.0,
+                    y_min: -10.0,
+                    y_max: 10.0,
+                    x_mode: AxisZoomMode::Manual,
+                    y_mode: AxisZoomMode::Manual,
+                    follow: FollowMode::Free,
+                    x_window_size: 20.0,
+                    lock_aspect_ratio: true,
+                };
+                let viewport_id = egui::Id::new(ROUTE_PLOT_VIEWPORT_ID);
+                let mut viewport = egui_ui
+                    .ctx()
+                    .data_mut(|data| data.get_temp::<ViewportState>(viewport_id))
+                    .unwrap_or(reference);
+                if egui_ui.button("Reset view").clicked() {
+                    viewport = reference;
+                }
+                let side = egui_ui.available_width().min(320.0);
+                let props = ScatterPlotProps::new("runnerd_bs_demo_route_plot")
+                    .axis_labels("east", "north")
+                    .size(side, side)
+                    .legend(true)
+                    .lock_view(true)
+                    .uniform_zoom(true)
+                    .drag_to_pan(true);
+                ScatterPlot::show_with_viewport(
+                    egui_ui,
+                    &props,
+                    route_demo_dataset(),
+                    &mut viewport,
+                );
                 egui_ui
                     .ctx()
                     .data_mut(|data| data.insert_temp(viewport_id, viewport));
@@ -406,6 +457,40 @@ fn line_for_series(series: shared::MetricSeries) -> egui_plot::Line<'static> {
     };
 
     egui_plot::Line::new(series.label, points).color(color)
+}
+
+fn route_demo_dataset() -> &'static ScatterDataset {
+    static ROUTE_DEMO_DATASET: OnceLock<ScatterDataset> = OnceLock::new();
+
+    ROUTE_DEMO_DATASET.get_or_init(|| {
+        let route_color = egui::Color32::from_rgb(214, 51, 132);
+        let route = [(-7.0, -6.0), (-2.0, 5.0), (4.0, 3.0), (7.0, -5.0)]
+            .map(|(x, y)| ScatterPoint::new(x, y).size(4.0).color(route_color));
+        let position = (-4.0, -2.0);
+
+        ScatterDataset::new(vec![
+            ScatterSeries::new("route.waypoints", "Route")
+                .with_points(route.to_vec())
+                .line(ScatterLine::new(2.0, route_color)),
+            ScatterSeries::new("route.position", "Position").with_points(vec![
+                ScatterPoint::new(position.0, position.1)
+                    .shape(ScatterShape::Diamond)
+                    .size(6.0)
+                    .color(egui::Color32::from_rgb(40, 40, 40)),
+            ]),
+            ScatterSeries::new("route.vector", "Guidance vector").with_arrows(vec![
+                ScatterArrow::new(position, (-2.0, 5.0))
+                    .width(3.0)
+                    .color(egui::Color32::from_rgb(253, 126, 20)),
+            ]),
+            ScatterSeries::new("route.heading", "Heading (fixed length)").with_arrows(vec![
+                ScatterArrow::fixed_length(position, (1.0, 1.0), 36.0)
+                    .width(2.0)
+                    .head_length(10.0)
+                    .color(egui::Color32::from_rgb(40, 40, 40)),
+            ]),
+        ])
+    })
 }
 
 fn scatter_demo_dataset() -> &'static ScatterDataset {

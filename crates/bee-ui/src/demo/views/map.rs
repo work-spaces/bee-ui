@@ -71,8 +71,8 @@ pub(super) fn render_view_map(ui: &mut UiRoot<'_>) {
     ui.row(Row::new().gutter(Spacing::new(12.0, 12.0)), |ui| {
         ui.col(Col::new().xs(12).md(4), |ui| {
             ui.card(Card::new().title("Viewport controls").outline(), |ui| {
-                ui.label(Label::new("− / + buttons adjust zoom").small());
-                ui.label(Label::new("Recenter follows the configured position").small());
+                ui.label(Label::new("Zoom out / zoom in buttons adjust zoom").small());
+                ui.label(Label::new("Re-center follows the configured position").small());
                 ui.label(Label::new("Map state is retained by its stable widget ID").small());
             });
         });
